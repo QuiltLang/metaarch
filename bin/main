@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Main entrypoint: the metaarch CLI (parse / check / generate .arch files).
+# Works from anywhere when the direnv env is active.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec cargo run --manifest-path "$ROOT/Cargo.toml" -p metaarch -- "$@"

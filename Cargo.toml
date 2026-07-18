@@ -1,0 +1,20 @@
+[workspace]
+members = [
+  "metaarch",
+  "metaarch-codegen",
+  "metaarch-parser",
+  "metaarch-spec",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+anyhow = "1"
+clap = {version = "4", features = ["derive"]}
+metaarch-codegen = {path = "metaarch-codegen"}
+metaarch-parser = {path = "metaarch-parser"}
+metaarch-spec = {path = "metaarch-spec"}

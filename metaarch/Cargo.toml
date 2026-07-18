@@ -1,0 +1,11 @@
+[package]
+name = "metaarch"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+metaarch-parser.workspace = true
+metaarch-spec.workspace = true

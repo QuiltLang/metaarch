@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+# Expand every *.quilt source to its generated sibling.
+# The generated files are gitignored; run this after a fresh checkout, and
+# again after editing any *.quilt, before `cargo build`.
+set -e
+cd "$(dirname "$0")/.."
+
+# quilt CLI used to expand the `.quilt` sources. Defaults to the sibling
+# quilt checkout's wrapper (`cargo run -p quiltlang`); override with $QUILT to
+# point at a specific build.
+QUILT="${QUILT:-../quilt/bin/quilt}"
+
+find . -name '*.quilt' -not -path './target/*' -not -path './out/*' | while read -r f; do
+  echo "==> quilt expand $f"
+  "$QUILT" expand "$f"
+done

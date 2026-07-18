@@ -1,0 +1,29 @@
+# A tiny web shop: two Rust services, a Python consumer, one event.
+# Check it:     bin/main check examples/shop.arch
+# Generate it:  bin/main generate examples/shop.arch -o out   (phase 1)
+system shop
+
+service gateway {
+  lang rust
+  port 8080
+}
+
+service orders {
+  lang rust
+  port 8081
+  db postgres {
+    table orders {
+      id: uuid pk,
+      user_id: uuid,
+      total: money,
+      status: enum(pending, paid, shipped),
+      placed_at: timestamp,
+    }
+  }
+  emits OrderPlaced { order_id: uuid, total: money }
+}
+
+service notifier {
+  lang python
+  consumes OrderPlaced
+}

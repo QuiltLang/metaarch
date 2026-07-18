@@ -1,0 +1,7 @@
+/target
+/local
+/.claude
+/.direnv
+/out
+
+# Generated from *.quilt by bin/expand (run bin/expand to create).
