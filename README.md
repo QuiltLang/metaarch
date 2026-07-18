@@ -38,22 +38,31 @@ The direnv env (`.envrc` + `nix/flake.nix`) provides the toolchain and puts
 
 ```sh
 direnv allow
+bin/expand                           # expand .rs.quilt generator sources (needs ../quilt)
 bin/main check examples/shop.arch    # parse + validate
 bin/main dump examples/shop.arch     # print the typed SystemSpec
+bin/main generate examples/shop.arch # generate the runnable system into out/shop
 cargo test                           # parser + validation tests
 ```
 
-Code generation (`bin/main generate`) is phase 1 — see the
-[plan](docs/wiki/plan.md). Generated systems follow the same repo shape as
-this one: a `nix/` env, a `bin/main` entrypoint that boots the system, one
-directory per service.
+Generated systems follow the same repo shape as this one: a `nix/` env, a
+`bin/main` entrypoint that boots the fleet, one directory per service. Try
+the shop:
+
+```sh
+cd out/shop && bin/main &            # build + boot gateway, orders, notifier
+curl -X POST http://127.0.0.1:8081/emit/OrderPlaced \
+     -H 'Content-Type: application/json' \
+     -d '{"order_id": "42", "total": 4999}'
+# → the python notifier prints the typed event
+```
 
 ## Layout
 
 - `metaarch/` — the CLI (`check`, `dump`, `generate`)
 - `metaarch-spec/` — the typed `SystemSpec` + architectural validation
 - `metaarch-parser/` — lexer + recursive-descent parser for the `.arch` DSL
-- `metaarch-codegen/` — quilt-based generators (phase 1)
+- `metaarch-codegen/` — quilt-based generators (`.rs.quilt` metaprograms)
 - `docs/wiki/` — documentation and the build plan ([start here](docs/wiki/index.md))
 - `examples/` — sample `.arch` systems
 - `bin/` — `main` (CLI entrypoint), `expand` (re-expand `.quilt` sources)

@@ -1,0 +1,246 @@
+//! Generator for `lang python` services: a stdlib-only package per service
+//! with typed event dataclasses, an HTTP server exposing the same route
+//! shape as the Rust services (health / emit / events), and POST fan-out.
+//!
+//! This is the `.rs.quilt` source for the generated `python_service.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+//!
+//! Unlike the Rust and bash targets, Python quotes expand variadic blocks as
+//! fluent chains with no named builder, so ground emit loops cannot run
+//! inside them. Dynamic statement lists are therefore built at ground with
+//! `py_block` and spliced through a single hole.
+
+use metaarch_spec::{EventType, SystemSpec};
+use quilt::prelude::*;
+
+use crate::{Artifact, header};
+
+pub(crate) fn artifacts(spec: &SystemSpec, index: usize) -> Vec<Artifact> {
+    let service = &spec.services[index];
+    let events = crate::service_events(spec, service);
+    let name = &service.name;
+    let mut out = vec![
+        Artifact::file(format!("{name}/{name}/__init__.py"), init_py(spec, index)),
+        Artifact::file(
+            format!("{name}/{name}/__main__.py"),
+            format!("{}\n\nfrom . import serve\n\nserve()\n", header(&spec.name, "#")),
+        ),
+    ];
+    if !events.is_empty() {
+        out.push(Artifact::file(
+            format!("{name}/{name}/events.py"),
+            events_py(spec, &events),
+        ));
+    }
+    out
+}
+
+/// `events.py`: one dataclass per event this service emits or consumes,
+/// mirroring the Rust `events.rs` field for field.
+fn events_py(spec: &SystemSpec, events: &[&EventType]) -> String {
+    let mut groups: Vec<Vec<⟨T⟩>> = vec![vec![python↖from dataclasses import dataclass↗]];
+    for event in events {
+        groups.push(vec![dataclass(event)]);
+    }
+    format!(
+        "{}\n\n{}",
+        header(&spec.name, "#"),
+        py_module(groups).coparse()
+    )
+}
+
+fn dataclass(event: &EventType) -> ⟨T⟩ {
+    let cls = leaf("identifier", &event.name);
+    let mut fields: Vec<⟨T⟩> = Vec::new();
+    for field in &event.fields {
+        let fname = leaf("identifier", &field.name);
+        let fty = leaf("identifier", crate::python_ty(&field.ty));
+        fields.push(python↖↙fname↘: ↙fty↘↗);
+    }
+    if fields.is_empty() {
+        fields.push(python↖pass↗);
+    }
+    let body = py_block(fields);
+    let class = python↖
+        @dataclass
+        class ↙cls↘:
+            ↙body↘
+    ↗;
+    class
+}
+
+/// `__init__.py`: the service module — config constants, the HTTP handler
+/// with per-event routes resolved from the spec, and `serve()`.
+fn init_py(spec: &SystemSpec, index: usize) -> String {
+    let service = &spec.services[index];
+    let events = crate::service_events(spec, service);
+    let port = crate::service_port(service, index) as u64;
+    let service_name = service.name.clone();
+
+    let mut imports = vec![python↖import http.server↗, python↖import json↗];
+    if !service.emits.is_empty() {
+        imports.insert(0, python↖import http.client↗);
+    }
+
+    let mut groups: Vec<Vec<⟨T⟩>> = vec![imports];
+    if !events.is_empty() {
+        let names = leaf(
+            "identifier",
+            &events
+                .iter()
+                .map(|e| e.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", "),
+        );
+        groups.push(vec![python↖from .events import ↙names↘↗]);
+    }
+    groups.push(vec![
+        python↖SERVICE = ↙service_name.↑↘↗,
+        python↖PORT = ↙port.↑↘↗,
+    ]);
+
+    let mut branches: Vec<⟨T⟩> = Vec::new();
+    for event in &service.emits {
+        branches.push(emit_branch(spec, event));
+    }
+    for (name, _) in &service.consumes {
+        branches.push(consume_branch(crate::event_named(spec, name)));
+    }
+    groups.push(vec![handler_class(branches)]);
+
+    if !service.emits.is_empty() {
+        groups.push(vec![python↖
+            def post(addr, path, body):
+                conn = http.client.HTTPConnection(addr, timeout=5)
+                try:
+                    conn.request("POST", path, body, {"Content-Type": "application/json"})
+                    conn.getresponse().read()
+                except OSError as err:
+                    print(SERVICE, "bus: no consumer listening at", addr, err)
+                finally:
+                    conn.close()
+        ↗]);
+    }
+
+    groups.push(vec![python↖
+        def serve():
+            server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+            print(SERVICE, "listening on", "http://127.0.0.1:" + str(PORT), "(health at /health)")
+            server.serve_forever()
+    ↗]);
+
+    format!(
+        "{}\n\n{}",
+        header(&spec.name, "#"),
+        py_module(groups).coparse()
+    )
+}
+
+/// The `if self.path == "/emit/<E>":` branch — validate the payload against
+/// the dataclass, then fan out to every consumer baked in from the spec.
+fn emit_branch(spec: &SystemSpec, event: &EventType) -> ⟨T⟩ {
+    let path = crate::emit_path(&event.name);
+    let cls = leaf("identifier", &event.name);
+    let targets = crate::consumer_addrs(spec, &event.name);
+    let target_path = crate::event_path(&event.name);
+    // No trailing newline: the string is lifted into a literal, and a raw
+    // newline would split the quoted source across lines.
+    let ok = format!("emitted {} to {} consumer(s)", event.name, targets.len());
+
+    let mut stmts = vec![python↖event = ↙cls↘(**payload)↗];
+    if !targets.is_empty() {
+        stmts.push(python↖body = json.dumps(payload)↗);
+        for addr in targets {
+            let tp = target_path.clone();
+            stmts.push(python↖post(↙addr.↑↘, ↙tp.↑↘, body)↗);
+        }
+    }
+    stmts.push(python↖self.reply(200, ↙ok.↑↘)↗);
+    stmts.push(python↖return↗);
+    let body = py_block(stmts);
+    let branch = python↖
+        if self.path == ↙path.↑↘:
+            ↙body↘
+    ↗;
+    branch
+}
+
+/// The `if self.path == "/events/<E>":` branch — parse into the typed
+/// dataclass and log the delivery.
+fn consume_branch(event: &EventType) -> ⟨T⟩ {
+    let path = crate::event_path(&event.name);
+    let cls = leaf("identifier", &event.name);
+    let stmts = vec![
+        python↖event = ↙cls↘(**payload)↗,
+        python↖print(SERVICE, "received", event)↗,
+        python↖self.reply(200, "ok\n")↗,
+        python↖return↗,
+    ];
+    let body = py_block(stmts);
+    let branch = python↖
+        if self.path == ↙path.↑↘:
+            ↙body↘
+    ↗;
+    branch
+}
+
+fn handler_class(branches: Vec<⟨T⟩>) -> ⟨T⟩ {
+    let dispatch = py_block(branches);
+    let class = python↖
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == "/health":
+                    self.reply(200, "ok\n")
+                else:
+                    self.reply(404, "not found\n")
+
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length)
+                payload = json.loads(raw) if raw else {}
+                ↙dispatch↘
+                self.reply(404, "unknown event\n")
+
+            def reply(self, status, text):
+                self.send_response(status)
+                self.send_header("Content-Type", "text/plain")
+                self.end_headers()
+                self.wfile.write(text.encode())
+
+            def log_message(self, fmt, *args):
+                pass
+    ↗;
+    class
+}
+
+/// Statements joined by newlines, for splicing through one block hole.
+fn py_block(stmts: Vec<⟨T⟩>) -> ⟨T⟩ {
+    let mut b_ = tb("block");
+    for (i, stmt) in stmts.into_iter().enumerate() {
+        if i > 0 {
+            NL.emit(&mut b_);
+        }
+        stmt.emit(&mut b_);
+    }
+    b_.b()
+}
+
+/// Assemble statement groups into a module: single newline within a group,
+/// one blank line between groups.
+fn py_module(groups: Vec<Vec<⟨T⟩>>) -> ⟨T⟩ {
+    let mut b_ = tb("module");
+    for (gi, group) in groups.into_iter().enumerate() {
+        if gi > 0 {
+            NL.emit(&mut b_);
+            NL.emit(&mut b_);
+        }
+        for (i, stmt) in group.into_iter().enumerate() {
+            if i > 0 {
+                NL.emit(&mut b_);
+            }
+            stmt.emit(&mut b_);
+        }
+    }
+    NL.emit(&mut b_);
+    b_.b()
+}

@@ -1,0 +1,230 @@
+//! Generator for `lang rust` services: an axum crate per service with a
+//! health endpoint, typed serde structs for its events, an HTTP fan-out bus
+//! shim, and one route per emitted or consumed event.
+//!
+//! This is the `.rs.quilt` source for the generated `rust_service.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+
+#![allow(clippy::unit_arg)]
+
+use metaarch_spec::{EventType, Service, SystemSpec};
+use quilt::prelude::*;
+
+use crate::{Artifact, header};
+
+pub(crate) fn artifacts(spec: &SystemSpec, index: usize) -> Vec<Artifact> {
+    let service = &spec.services[index];
+    let events = crate::service_events(spec, service);
+    let mut out = vec![
+        Artifact::file(
+            format!("{}/Cargo.toml", service.name),
+            cargo_toml(spec, service, !events.is_empty()),
+        ),
+        Artifact::file(
+            format!("{}/src/main.rs", service.name),
+            main_rs(spec, index),
+        ),
+    ];
+    if !events.is_empty() {
+        out.push(Artifact::file(
+            format!("{}/src/events.rs", service.name),
+            events_rs(spec, &events),
+        ));
+    }
+    if !service.emits.is_empty() {
+        out.push(Artifact::file(
+            format!("{}/src/bus.rs", service.name),
+            bus_rs(spec),
+        ));
+    }
+    out
+}
+
+/// The service's crate manifest. Serde only appears when the service touches
+/// events; versions are pinned coarsely so `generate` stays deterministic.
+fn cargo_toml(spec: &SystemSpec, service: &Service, has_events: bool) -> String {
+    let mut out = format!(
+        "{}\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\naxum = \"0.8\"\n",
+        header(&spec.name, "#"),
+        service.name,
+    );
+    if has_events {
+        out.push_str("serde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n");
+    }
+    out.push_str("tokio = { version = \"1\", features = [\"full\"] }\n");
+    out
+}
+
+/// `src/main.rs`: router wiring, one handler per event route, and the
+/// listener bound to the address the spec resolves to.
+fn main_rs(spec: &SystemSpec, index: usize) -> String {
+    let service = &spec.services[index];
+    let addr = crate::service_addr(service, index);
+    let banner = format!(
+        "{} listening on http://{} (health at /health)",
+        service.name, addr
+    );
+
+    let mut router = rust↖axum::Router::new().route("/health", axum::routing::get(health))↗;
+    for event in &service.emits {
+        let path = crate::emit_path(&event.name);
+        let handler = emit_handler(spec, event);
+        router = rust↖↙router↘.route(↙path.↑↘, axum::routing::post(↙handler↘))↗;
+    }
+    for (name, _) in &service.consumes {
+        let path = crate::event_path(name);
+        let handler = consume_handler(service, crate::event_named(spec, name));
+        router = rust↖↙router↘.route(↙path.↑↘, axum::routing::post(↙handler↘))↗;
+    }
+
+    let mut items: Vec<⟨T⟩> = Vec::new();
+    if !crate::service_events(spec, service).is_empty() {
+        items.push(rust↖mod events;↗);
+    }
+    if !service.emits.is_empty() {
+        items.push(rust↖mod bus;↗);
+    }
+    items.push(rust↖
+        #[tokio::main]
+        async fn main() {
+            let app = ↙router↘;
+            let addr: &str = ↙addr.↑↘;
+            let banner: &str = ↙banner.↑↘;
+            let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+            println!("{banner}");
+            axum::serve(listener, app).await.unwrap();
+        }
+    ↗);
+    items.push(rust↖
+        async fn health() -> &'static str {
+            "ok"
+        }
+    ↗);
+
+    format!("{}\n\n{}", header(&spec.name, "//!"), source_file(items).coparse())
+}
+
+/// Handler for `POST /emit/<Event>`: parse the typed event, then fan its
+/// JSON out to every consumer resolved from the spec at generation time.
+fn emit_handler(spec: &SystemSpec, event: &EventType) -> ⟨T⟩ {
+    let ty = event_ty(event);
+    let targets = crate::consumer_addrs(spec, &event.name);
+    // No trailing newline: the string is lifted into a literal, and a raw
+    // newline would split the quoted source across lines.
+    let ok = format!("emitted {} to {} consumer(s)", event.name, targets.len());
+    if targets.is_empty() {
+        return rust↖|axum::Json(_event): axum::Json<↙ty↘>| async move { ↙ok.↑↘ }↗;
+    }
+    let path = crate::event_path(&event.name);
+    rust↖|axum::Json(event): axum::Json<↙ty↘>| async move {
+        let body = serde_json::to_string(&event).unwrap();
+        ↙{
+            for (i, addr) in targets.into_iter().enumerate() {
+                if i > 0 {
+                    NL.←;
+                }
+                rust↖bus::post(↙addr.↑↘, ↙path.as_str().↑↘, body.clone()).await;↗.←;
+            }
+        }↘
+        ↙ok.↑↘
+    }↗
+}
+
+/// Handler for `POST /events/<Event>` on a consuming service: parse the
+/// typed event and log it. Real behavior is the owner's to add downstream;
+/// phase 1 proves the wiring.
+fn consume_handler(service: &Service, event: &EventType) -> ⟨T⟩ {
+    let ty = event_ty(event);
+    let label = format!("{} received {}:", service.name, event.name);
+    rust↖|axum::Json(event): axum::Json<↙ty↘>| async move {
+        let label: &str = ↙label.↑↘;
+        println!("{label} {}", serde_json::to_string(&event).unwrap());
+        "ok\n"
+    }↗
+}
+
+/// The `events::<Name>` type reference for handler signatures.
+fn event_ty(event: &EventType) -> ⟨T⟩ {
+    leaf("type_identifier", &format!("events::{}", event.name))
+}
+
+/// `src/events.rs`: one serde struct per event this service emits or
+/// consumes. Struct and field names come from the spec, so the items are
+/// built with the term builders rather than quotes (identifier positions
+/// accept no holes in the Rust grammar).
+fn events_rs(spec: &SystemSpec, events: &[&EventType]) -> String {
+    let mut b_ = tb("source_file");
+    for (i, event) in events.iter().enumerate() {
+        if i > 0 {
+            NL.emit(&mut b_);
+            NL.emit(&mut b_);
+        }
+        event_struct(event).emit(&mut b_);
+    }
+    NL.emit(&mut b_);
+    format!(
+        "{}\n\n{}",
+        header(&spec.name, "//!"),
+        b_.b().coparse()
+    )
+}
+
+fn event_struct(event: &EventType) -> ⟨T⟩ {
+    let mut b = tb("struct_item")
+        .w("#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]")
+        .n()
+        .w(&format!("pub struct {} {{", event.name))
+        .p("    ");
+    for field in &event.fields {
+        b = b
+            .n()
+            .w(&format!("pub {}: {},", field.name, crate::rust_ty(&field.ty)));
+    }
+    b.x().n().w("}").b()
+}
+
+/// `src/bus.rs`: the MVP event transport. A hand-rolled HTTP/1.1 POST over
+/// `std::net::TcpStream` keeps the generated services free of an HTTP client
+/// dependency; the fan-out addresses are baked in by the emit handlers.
+fn bus_rs(spec: &SystemSpec) -> String {
+    let module = rust↖
+        pub async fn post(addr: &'static str, path: &'static str, body: String) {
+            let _ = tokio::task::spawn_blocking(move || post_blocking(addr, path, &body)).await;
+        }
+
+        fn post_blocking(addr: &str, path: &str, body: &str) {
+            use std::io::{Read, Write};
+            let Ok(mut stream) = std::net::TcpStream::connect(addr) else {
+                eprintln!("bus: no consumer listening at {addr}");
+                return;
+            };
+            let request = format!(
+                "POST {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+                len = body.len()
+            );
+            if stream.write_all(request.as_bytes()).is_ok() {
+                let mut response = String::new();
+                let _ = stream.read_to_string(&mut response);
+            }
+        }
+    ↗;
+    format!(
+        "{}\n//! HTTP fan-out event transport (phase 1 MVP).\n\n{}",
+        header(&spec.name, "//!"),
+        module.coparse()
+    )
+}
+
+/// Assemble items into one file term, blank lines between items.
+fn source_file(items: Vec<⟨T⟩>) -> ⟨T⟩ {
+    let mut b_ = tb("source_file");
+    for (i, item) in items.into_iter().enumerate() {
+        if i > 0 {
+            NL.emit(&mut b_);
+            NL.emit(&mut b_);
+        }
+        item.emit(&mut b_);
+    }
+    NL.emit(&mut b_);
+    b_.b()
+}

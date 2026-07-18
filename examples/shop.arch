@@ -1,6 +1,7 @@
 # A tiny web shop: two Rust services, a Python consumer, one event.
 # Check it:     bin/main check examples/shop.arch
-# Generate it:  bin/main generate examples/shop.arch -o out   (phase 1)
+# Generate it:  bin/main generate examples/shop.arch
+# Boot it:      cd out/shop && bin/main
 system shop
 
 service gateway {

@@ -6,3 +6,7 @@ license.workspace = true
 
 [dependencies]
 metaarch-spec.workspace = true
+# Runtime-only (no tree-sitter): the `rust` feature provides `qlift`/`name`;
+# the `LiftTo` markers for the Python/Bash targets need no feature. Parsing of
+# the `.rs.quilt` sources happens at expansion time via `bin/expand`.
+quilt = {workspace = true, features = ["rust"]}

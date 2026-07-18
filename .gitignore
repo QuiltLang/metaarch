@@ -5,3 +5,6 @@
 /out
 
 # Generated from *.quilt by bin/expand (run bin/expand to create).
+/metaarch-codegen/src/python_service.rs
+/metaarch-codegen/src/rust_service.rs
+/metaarch-codegen/src/system.rs

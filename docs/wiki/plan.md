@@ -18,29 +18,31 @@ front half of the pipeline:
 **Demo:** `bin/main check examples/shop.arch` rejects broken architectures
 with line/col diagnostics.
 
-## Phase 1 — generation MVP
+## Phase 1 — generation MVP ✅
 
 The first end-to-end `generate`: one event-driven system, runnable locally.
 
-- [ ] Add quilt to `metaarch-codegen` (git dep on a pinned quilt tag,
+- [x] Add quilt to `metaarch-codegen` (git dep on the pinned `v0.5.0` tag,
       `default-features = false`, like nanobots) and wire `bin/expand`
-- [ ] Generator metaprograms as `.rs.quilt` sources in `metaarch-codegen`,
+- [x] Generator metaprograms as `.rs.quilt` sources in `metaarch-codegen`,
       expanded to `.rs` siblings (gitignored) and compiled into the crate:
-  - [ ] **Rust service** — axum skeleton per `lang rust` service: health
+  - [x] **Rust service** — axum skeleton per `lang rust` service: health
         endpoint, typed event structs (serde) for its `emits`/`consumes`
-  - [ ] **SQL schema** — DDL per `db` block (postgres + sqlite dialects from
-        the same tables; `enum` → `CHECK` constraint or native enum)
-  - [ ] **Python service** — consumer skeleton per `lang python` service with
-        typed event dataclasses
-  - [ ] **Event bus** — MVP transport: HTTP POST fan-out from emitter to each
+  - [x] **SQL schema** — DDL per `db` block (postgres + sqlite dialects from
+        the same tables; `enum` → `CHECK` constraint)
+  - [x] **Python service** — stdlib-only package per `lang python` service
+        with typed event dataclasses
+  - [x] **Event bus** — MVP transport: HTTP POST fan-out from emitter to each
         consumer's `/events/<Name>` endpoint (no broker to deploy; swappable
         later)
-- [ ] Generated-system layout mirrors this repo (see [codegen](codegen.md)):
+- [x] Generated-system layout mirrors this repo (see [codegen](codegen.md)):
       `nix/` env, `bin/main` boot script, one directory per service
-- [ ] `metaarch generate` writes `out/<system>/` and prints what it made
+- [x] `metaarch generate` writes `out/<system>/` and prints what it made
 
-**Demo:** `bin/main generate examples/shop.arch && cd out/shop && bin/main`
-boots the shop; placing an order over HTTP triggers the Python notifier.
+**Demo (works):** `bin/main generate examples/shop.arch && cd out/shop &&
+bin/main` boots the shop; `curl -X POST 127.0.0.1:8081/emit/OrderPlaced -d
+'{"order_id": "…", "total": 4999}'` makes the Python notifier print the
+typed event.
 
 ## Phase 2 — the full artifact fan-out
 
@@ -112,3 +114,14 @@ between arrow brackets, type-checked in place by the LSP.
 - **Generated systems mirror this repo's shape** (2026-07-18): `nix/` env +
   `bin/main` entrypoint + per-service directories, so navigating a generated
   system feels like navigating metaarch itself.
+- **Deterministic fallback ports** (2026-07-18): a service without `port`
+  listens on `9000 + its index` in the file. Every service gets an address,
+  so consumers are reachable without forcing `port` into every `.arch` file.
+- **`/emit/<Event>` trigger routes** (2026-07-18): the DSL has no endpoint
+  surface yet, so each emitter exposes `POST /emit/<E>` — parse the typed
+  event, fan it out. It is the only honest derivable "business" route until
+  phase 4 inline handlers, and it makes every event path curl-able.
+- **Phase-1 type spellings** (2026-07-18): `uuid`/`timestamp` travel as
+  strings (no uuid/chrono deps in generated services), `money` is integer
+  minor units, `enum` is TEXT + CHECK in both SQL dialects. All seven types
+  keep one spelling per target in `metaarch-codegen/src/lib.rs`.

@@ -18,3 +18,7 @@ clap = {version = "4", features = ["derive"]}
 metaarch-codegen = {path = "metaarch-codegen"}
 metaarch-parser = {path = "metaarch-parser"}
 metaarch-spec = {path = "metaarch-spec"}
+# Pinned to a tag so the runtime the expanded `.rs` generators compile against
+# matches the expander (the sibling quilt checkout used by `bin/expand`), like
+# nanobots. Bump deliberately: re-expand and rebuild when you do.
+quilt = {git = "https://github.com/QuiltLang/quilt.git", tag = "v0.5.0", package = "quiltlang", default-features = false}

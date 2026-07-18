@@ -1,8 +1,7 @@
 # Code generation
 
 `metaarch-codegen` turns a validated `SystemSpec` into a runnable system.
-This page describes the design; implementation lands in phase 1 of the
-[plan](plan.md).
+Phase 1 of the [plan](plan.md) implemented the MVP described here.
 
 ## How the generators work
 
@@ -27,6 +26,19 @@ Each artifact kind is one generator function `fn(&SystemSpec) -> Artifact`
 (path + contents). Adding an artifact kind — a Grafana dashboard, a k6 load
 test — is one more function over the same spec, one more loop in `generate`.
 
+Two phase-1 lessons about where quotes stop and builders start:
+
+- **Identifier positions take no holes in the Rust grammar** (types and
+  patterns do), so items whose *names* come from the spec — the serde event
+  structs — are built with the `tb`/`leaf` term builders instead of quotes.
+- **Python quotes expand variadic blocks as fluent chains** with no named
+  builder, so ground emit loops (`←`) cannot run inside them. Dynamic
+  statement lists are built at ground (`py_block`) and spliced through a
+  single hole; Rust and bash quotes take emit loops directly.
+
+SQL and the config files (TOML, `.envrc`, README) are plain text built in
+ordinary Rust — quilt has no grammar for them yet.
+
 ## Generated-system layout
 
 A generated system is a repo that **mirrors metaarch's own shape** — `nix/`
@@ -36,24 +48,29 @@ output feels like navigating this repo:
 ```
 out/shop/
 ├── .envrc                  # use flake ./nix — same convention as this repo
+├── .gitignore
+├── README.md               # GENERATED topology + ports + curl instructions
+├── Cargo.toml              # workspace over the rust service crates
 ├── nix/
-│   └── flake.nix           # GENERATED dev env: rust + python toolchains,
-│                           #   postgres, per-service `nix run` apps
+│   └── flake.nix           # dev env: rust + python toolchains (plain text
+│                           #   until the phase 3 .nix.quilt generator)
 ├── bin/
-│   ├── main                # GENERATED entrypoint: boots the whole fleet
-│   │                       #   (db up → schemas applied → services started)
+│   ├── main                # GENERATED bash: builds, boots the whole fleet,
+│   │                       #   kills it together (db provisioning: phase 3)
 │   └── smoke               # GENERATED end-to-end smoke test (phase 2)
 ├── gateway/                # lang rust  → axum service crate
 │   ├── Cargo.toml
 │   └── src/main.rs
 ├── orders/                 # lang rust + db postgres
 │   ├── Cargo.toml
-│   ├── src/main.rs         #   axum skeleton, typed handlers
+│   ├── src/main.rs         #   axum skeleton, health + event routes
 │   ├── src/events.rs       #   serde structs for emits/consumes
+│   ├── src/bus.rs          #   HTTP fan-out shim (emitters only)
 │   └── sql/schema.sql      #   DDL derived from the `db` block
-├── notifier/               # lang python → consumer package
-│   ├── notifier/__init__.py
-│   └── notifier/events.py  #   dataclasses mirroring orders/src/events.rs
+├── notifier/               # lang python → stdlib-only package
+│   ├── notifier/__init__.py    # HTTP server, typed routes, serve()
+│   ├── notifier/__main__.py    # python3 -m notifier
+│   └── notifier/events.py      # dataclasses mirroring orders/src/events.rs
 └── docs/
     └── index.html          # GENERATED topology + API/event reference (phase 2)
 ```
@@ -86,6 +103,20 @@ generation time. No broker to deploy, fully traceable with curl. The
 transport is a generator concern invisible to `.arch` files, so swapping in
 NATS/Redis later (or per-event, by annotation) regenerates the wiring
 without touching any system description.
+
+Concretely, every service (either language) serves the same route shape:
+
+- `GET /health` — liveness.
+- `POST /emit/<E>` — on the emitter of `E`: parse the JSON into the typed
+  event, then fan out to each consumer's `/events/<E>`. This is the manual
+  trigger for every event path until phase 4 gives services real handlers.
+- `POST /events/<E>` — on each consumer of `E`: parse into the typed
+  struct/dataclass and log the delivery.
+
+Services without a declared `port` listen on a deterministic fallback
+(`9000 + index` of the service in the file), so every consumer is
+addressable. Rust emitters carry a dependency-free `bus.rs` (hand-rolled
+HTTP/1.1 POST over `TcpStream`); Python services use only the stdlib.
 
 ## Determinism
 

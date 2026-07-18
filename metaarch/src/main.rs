@@ -1,8 +1,11 @@
-//! The metaarch CLI: parse, validate, and (eventually) generate a full
-//! distributed system from a `.arch` description. `bin/main` wraps this.
+//! The metaarch CLI: parse, validate, and generate a full distributed
+//! system from a `.arch` description. `bin/main` wraps this.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
+
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 use anyhow::Context;
 use clap::{Parser, Subcommand};
@@ -24,8 +27,7 @@ enum Cmd {
     Check { file: PathBuf },
     /// Parse a .arch file and print the SystemSpec.
     Dump { file: PathBuf },
-    /// Generate the system into an output directory (not implemented yet;
-    /// see docs/wiki/plan.md phase 1).
+    /// Validate a .arch file, then generate the runnable system.
     Generate {
         file: PathBuf,
         /// Output directory for the generated system.
@@ -72,17 +74,33 @@ fn main() -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Cmd::Generate { file, out } => {
-            // Validate first so `generate` never runs on a broken architecture,
-            // then hand off to metaarch-codegen (phase 1, not implemented yet).
+            // Validate first so `generate` never runs on a broken architecture.
             let code = check(&file)?;
             if code != ExitCode::SUCCESS {
                 return Ok(code);
             }
-            anyhow::bail!(
-                "`generate` is not implemented yet (docs/wiki/plan.md, phase 1); \
-                 output would be written to {}",
-                out.display()
+            let spec = load(&file)?;
+            let root = out.join(&spec.name);
+            for artifact in metaarch_codegen::generate(&spec) {
+                let path = root.join(&artifact.path);
+                if let Some(dir) = path.parent() {
+                    std::fs::create_dir_all(dir)
+                        .with_context(|| format!("failed to create {}", dir.display()))?;
+                }
+                std::fs::write(&path, &artifact.contents)
+                    .with_context(|| format!("failed to write {}", path.display()))?;
+                #[cfg(unix)]
+                if artifact.executable {
+                    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+                }
+                println!("  wrote {}", path.display());
+            }
+            println!(
+                "generated system `{}` — boot it with `cd {} && bin/main`",
+                spec.name,
+                root.display()
             );
+            Ok(ExitCode::SUCCESS)
         }
     }
 }
