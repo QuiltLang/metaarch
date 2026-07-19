@@ -113,6 +113,14 @@ fn service_sections(spec: &SystemSpec) -> String {
                 "<tr><td><code>GET /peers</code></td><td>health of every peer, checked through the typed clients</td></tr>"
             );
         }
+        for route in &service.impls {
+            let _ = writeln!(
+                out,
+                "<tr><td><code>{} {}</code></td><td>inline <code>impl</code> fragment from the system description</td></tr>",
+                route.method.upper(),
+                route.path,
+            );
+        }
         for event in &service.emits {
             let _ = writeln!(
                 out,

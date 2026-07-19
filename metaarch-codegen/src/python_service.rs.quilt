@@ -10,7 +10,7 @@
 //! inside them. Dynamic statement lists are therefore built at ground with
 //! `py_block` and spliced through a single hole.
 
-use metaarch_spec::{EventType, SystemSpec};
+use metaarch_spec::{EventType, ImplRoute, Method, SystemSpec};
 use quilt::prelude::*;
 
 use crate::{Artifact, header};
@@ -99,14 +99,25 @@ fn init_py(spec: &SystemSpec, index: usize) -> String {
         python↖PORT = ↙port.↑↘↗,
     ]);
 
-    let mut branches: Vec<⟨T⟩> = Vec::new();
+    let mut get_branches: Vec<⟨T⟩> = vec![python↖
+        if self.path == "/health":
+            self.reply(200, "ok\n")
+            return
+    ↗];
+    let mut post_branches: Vec<⟨T⟩> = Vec::new();
     for event in &service.emits {
-        branches.push(emit_branch(spec, event));
+        post_branches.push(emit_branch(spec, event));
     }
     for (name, _) in &service.consumes {
-        branches.push(consume_branch(crate::event_named(spec, name)));
+        post_branches.push(consume_branch(crate::event_named(spec, name)));
     }
-    groups.push(vec![handler_class(branches)]);
+    for route in &service.impls {
+        match route.method {
+            Method::Get => get_branches.push(impl_branch(route)),
+            Method::Post => post_branches.push(impl_branch(route)),
+        }
+    }
+    groups.push(vec![handler_class(get_branches, post_branches)]);
 
     if !service.emits.is_empty() {
         groups.push(vec![python↖
@@ -129,11 +140,41 @@ fn init_py(spec: &SystemSpec, index: usize) -> String {
             server.serve_forever()
     ↗]);
 
-    format!(
+    let mut out = format!(
         "{}\n\n{}",
         header(&spec.name, "#"),
         py_module(groups).coparse()
-    )
+    );
+    // `impl` fragments are opaque strings (the phase-4 escape hatch), so
+    // their handlers are appended as text rather than built as terms; the
+    // fragment is the body of a function returning the response text.
+    for route in &service.impls {
+        out.push_str(&format!(
+            "\n# Inline `impl {} {}` fragment from the system description.\ndef {}(self):\n{}\n",
+            route.method.verb(),
+            route.path,
+            route.handler_name(),
+            crate::indent(&route.body, 4),
+        ));
+    }
+    out
+}
+
+/// The `if self.path == "<path>":` branch for an `impl` route — reply with
+/// whatever the appended fragment function returns.
+fn impl_branch(route: &ImplRoute) -> ⟨T⟩ {
+    let path = route.path.clone();
+    let handler = leaf("identifier", &route.handler_name());
+    let stmts = vec![
+        python↖self.reply(200, ↙handler↘(self))↗,
+        python↖return↗,
+    ];
+    let body = py_block(stmts);
+    let branch = python↖
+        if self.path == ↙path.↑↘:
+            ↙body↘
+    ↗;
+    branch
 }
 
 /// The `if self.path == "/emit/<E>":` branch — validate the payload against
@@ -184,15 +225,14 @@ fn consume_branch(event: &EventType) -> ⟨T⟩ {
     branch
 }
 
-fn handler_class(branches: Vec<⟨T⟩>) -> ⟨T⟩ {
-    let dispatch = py_block(branches);
+fn handler_class(get_branches: Vec<⟨T⟩>, post_branches: Vec<⟨T⟩>) -> ⟨T⟩ {
+    let get_dispatch = py_block(get_branches);
+    let dispatch = py_block(post_branches);
     let class = python↖
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path == "/health":
-                    self.reply(200, "ok\n")
-                else:
-                    self.reply(404, "not found\n")
+                ↙get_dispatch↘
+                self.reply(404, "not found\n")
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", "0"))

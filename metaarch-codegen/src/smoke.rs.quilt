@@ -11,7 +11,7 @@
 
 #![allow(clippy::unit_arg)]
 
-use metaarch_spec::{Lang, SystemSpec};
+use metaarch_spec::{Lang, Method, SystemSpec};
 use quilt::prelude::*;
 
 use crate::header;
@@ -50,6 +50,14 @@ pub(crate) fn bin_smoke(spec: &SystemSpec) -> String {
             let label = format!("{} GET /peers", service.name);
             let url = format!("http://{addr}/peers");
             checks.push(bash↖check_peers ↙label.↑↘ ↙url.↑↘↗);
+        }
+        for route in &service.impls {
+            let label = format!("{} {} {}", service.name, route.method.upper(), route.path);
+            let url = format!("http://{addr}{}", route.path);
+            match route.method {
+                Method::Get => checks.push(bash↖check_get ↙label.↑↘ ↙url.↑↘↗),
+                Method::Post => checks.push(bash↖check_post ↙label.↑↘ ↙url.↑↘ "{}"↗),
+            }
         }
     }
     for (index, service) in spec.services.iter().enumerate() {

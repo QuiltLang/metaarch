@@ -7,6 +7,11 @@ system shop
 service gateway {
   lang rust
   port 8080
+  # Inline handler body (the phase-4 escape hatch): the fragment between the
+  # arrow brackets is the tail expression of the generated axum handler.
+  impl get /hello ↖
+    "hello from an inline fragment!\n"
+  ↗
 }
 
 service orders {
@@ -27,4 +32,8 @@ service orders {
 service notifier {
   lang python
   consumes OrderPlaced
+  # Python fragments are the body of a function returning the response text.
+  impl get /stats ↖
+    return "notifier alive\n"
+  ↗
 }

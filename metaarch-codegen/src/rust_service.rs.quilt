@@ -7,7 +7,7 @@
 
 #![allow(clippy::unit_arg)]
 
-use metaarch_spec::{EventType, Service, SystemSpec};
+use metaarch_spec::{EventType, Method, Service, SystemSpec};
 use quilt::prelude::*;
 
 use crate::{Artifact, header};
@@ -102,6 +102,14 @@ fn main_rs(spec: &SystemSpec, index: usize) -> String {
         let handler = consume_handler(service, crate::event_named(spec, name));
         router = rust↖↙router↘.route(↙path.↑↘, axum::routing::post(↙handler↘))↗;
     }
+    for route in &service.impls {
+        let path = route.path.clone();
+        let handler = leaf("identifier", &route.handler_name());
+        router = match route.method {
+            Method::Get => rust↖↙router↘.route(↙path.↑↘, axum::routing::get(↙handler↘))↗,
+            Method::Post => rust↖↙router↘.route(↙path.↑↘, axum::routing::post(↙handler↘))↗,
+        };
+    }
 
     let mut items: Vec<⟨T⟩> = Vec::new();
     if !rust_events(spec, index).is_empty() {
@@ -133,7 +141,20 @@ fn main_rs(spec: &SystemSpec, index: usize) -> String {
         items.push(peers_fn(spec, index));
     }
 
-    format!("{}\n\n{}", header(&spec.name, "//!"), source_file(items).coparse())
+    let mut out = format!("{}\n\n{}", header(&spec.name, "//!"), source_file(items).coparse());
+    // `impl` fragments are opaque strings (the phase-4 escape hatch), so
+    // their handlers are appended as text rather than built as terms; the
+    // fragment is the tail expression of the handler body.
+    for route in &service.impls {
+        out.push_str(&format!(
+            "\n/// Inline `impl {} {}` fragment from the system description.\nasync fn {}() -> impl axum::response::IntoResponse {{\n{}\n}}\n",
+            route.method.verb(),
+            route.path,
+            route.handler_name(),
+            crate::indent(&route.body, 4),
+        ));
+    }
+    out
 }
 
 /// Handler for `GET /peers`: report the health of every peer service through

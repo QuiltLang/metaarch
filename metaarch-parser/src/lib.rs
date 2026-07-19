@@ -6,7 +6,8 @@
 //! quote brackets (see docs/wiki/plan.md, phase 4).
 
 use metaarch_spec::{
-    Database, Engine, EventType, Field, Lang, Service, Span, SystemSpec, Table, Ty,
+    Database, Engine, EventType, Field, ImplRoute, Lang, Method, Service, Span, SystemSpec, Table,
+    Ty,
 };
 
 mod lex;
@@ -133,12 +134,13 @@ impl Parser {
             db: None,
             emits: Vec::new(),
             consumes: Vec::new(),
+            impls: Vec::new(),
             span,
         };
 
         while !self.eat(&Tok::RBrace) {
-            let (kw, kw_span) =
-                self.ident("a service entry (`lang`, `port`, `db`, `emits`, `consumes`)")?;
+            let (kw, kw_span) = self
+                .ident("a service entry (`lang`, `port`, `db`, `emits`, `consumes`, `impl`)")?;
             match kw.as_str() {
                 "lang" => {
                     if service.lang.is_some() {
@@ -190,11 +192,51 @@ impl Parser {
                     let (name, span) = self.ident("event name")?;
                     service.consumes.push((name, span));
                 }
+                // impl := "impl" ("get" | "post") path "↖" fragment "↗"
+                "impl" => {
+                    let (verb, verb_span) = self.ident("`get` or `post`")?;
+                    let method = match verb.as_str() {
+                        "get" => Method::Get,
+                        "post" => Method::Post,
+                        other => {
+                            return self.err(
+                                verb_span,
+                                format!("unknown method `{other}` (expected `get` or `post`)"),
+                            );
+                        }
+                    };
+                    let tok = self.next();
+                    let path = match tok.tok {
+                        Tok::Path(path) => path,
+                        other => {
+                            return self.err(
+                                tok.span,
+                                format!("expected a route path starting with `/`, found {other}"),
+                            );
+                        }
+                    };
+                    let tok = self.next();
+                    let body = match tok.tok {
+                        Tok::Fragment(body) => body,
+                        other => {
+                            return self.err(
+                                tok.span,
+                                format!("expected a `↖ … ↗` fragment, found {other}"),
+                            );
+                        }
+                    };
+                    service.impls.push(ImplRoute {
+                        method,
+                        path,
+                        body,
+                        span: kw_span,
+                    });
+                }
                 other => {
                     return self.err(
                         kw_span,
                         format!(
-                            "unknown service entry `{other}` (expected `lang`, `port`, `db`, `emits`, or `consumes`)"
+                            "unknown service entry `{other}` (expected `lang`, `port`, `db`, `emits`, `consumes`, or `impl`)"
                         ),
                     );
                 }
@@ -378,6 +420,45 @@ service notifier {
         let err =
             parse("system s\nservice a {\n db sqlite { table t { id: uuidd pk } }\n}").unwrap_err();
         assert!(err.message.contains("unknown type `uuidd`"), "{err}");
+    }
+
+    #[test]
+    fn parses_impl_route() {
+        let spec = parse(
+            "system s\nservice a {\n lang rust\n impl get /hello ↖\n   \"hi\".to_string()\n ↗\n}",
+        )
+        .unwrap();
+        let impls = &spec.services[0].impls;
+        assert_eq!(impls.len(), 1);
+        assert_eq!(impls[0].method, Method::Get);
+        assert_eq!(impls[0].path, "/hello");
+        assert_eq!(impls[0].body, "\"hi\".to_string()");
+        assert_eq!(impls[0].handler_name(), "impl_get_hello");
+    }
+
+    #[test]
+    fn dedents_multiline_fragment() {
+        let spec = parse(
+            "system s\nservice a {\n lang rust\n impl post /go ↖\n    let x = 1;\n      x + 1\n ↗\n}",
+        )
+        .unwrap();
+        assert_eq!(spec.services[0].impls[0].body, "let x = 1;\n  x + 1");
+        assert_eq!(spec.services[0].impls[0].handler_name(), "impl_post_go");
+    }
+
+    #[test]
+    fn rejects_unterminated_fragment() {
+        let err = parse("system s\nservice a {\n lang rust\n impl get /x ↖ oops\n}").unwrap_err();
+        assert!(err.message.contains("unterminated"), "{err}");
+    }
+
+    #[test]
+    fn rejects_impl_without_path() {
+        let err = parse("system s\nservice a {\n impl get hello ↖ x ↗\n}").unwrap_err();
+        assert!(
+            err.message.contains("expected a route path"),
+            "{err}"
+        );
     }
 
     #[test]
