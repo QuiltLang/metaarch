@@ -7,9 +7,11 @@ system shop
 service gateway {
   lang rust
   port 8080
-  # Inline handler body (the phase-4 escape hatch): the fragment between the
-  # arrow brackets is the tail expression of the generated axum handler.
-  impl get /hello ↖
+  # Inline handler body: the fragment between the arrow brackets is parsed
+  # with the real Rust grammar and spliced in as the tail expression of the
+  # generated axum handler. The language annotation (`rust↖`, the same
+  # spelling a .arch.quilt quote uses) is optional — it must match `lang`.
+  impl get /hello rust↖
     "hello from an inline fragment!\n"
   ↗
 }
@@ -32,7 +34,8 @@ service orders {
 service notifier {
   lang python
   consumes OrderPlaced
-  # Python fragments are the body of a function returning the response text.
+  # Python fragments are the body of a function returning the response text
+  # (parsed with the real Python grammar; annotation left off here).
   impl get /stats ↖
     return "notifier alive\n"
   ↗

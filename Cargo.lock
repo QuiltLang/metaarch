@@ -388,6 +388,7 @@ dependencies = [
  "anyhow",
  "clap",
  "metaarch-codegen",
+ "metaarch-expand",
  "metaarch-parser",
  "metaarch-spec",
 ]

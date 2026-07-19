@@ -127,9 +127,29 @@ decision below):
       CLI's). `.arch.quilt` files parse — with `impl` fragments as real
       parsed `rust↖…↗` quotes — and host metaprograms can quote and splice
       arch (`arch↖system ↙name↘ …↗`)
-- [ ] Inline quotes inside `.arch`: `rust↖ ... ↗` bodies on services/handlers,
-      spliced into the generated code at expansion time — replacing the
-      string escape hatch with real ASTs
+- [x] Real-AST fragments: `impl` bodies (optionally annotated
+      `rust↖ … ↗`/`python↖ … ↗`, the `.arch.quilt` quote spelling, checked
+      against the service's `lang`) are parsed with the real tree-sitter
+      grammars — `metaarch-codegen`'s new `fragment` module, quilt's `parse`
+      feature — and spliced into the generated handlers as terms, replacing
+      the 4a text-append; a malformed fragment now fails `metaarch check`
+      with a positioned diagnostic. Generated output for the shop is
+      byte-identical to 4a's
+- [x] An arch `MetaLanguage` — again zero quilt changes (`DictMulti::add_meta`
+      is the hook). arch is a *data* language: it stages no computation, so
+      expanding an arch host is an identity rebuild. The piece that makes
+      quilt's expander agree is in the parser: quote plugs are demoted to
+      coparse-identical plain tuples (a `rust↖…↗` fragment is carried syntax,
+      not staged code), so nothing quote-shaped remains for the ground
+      expander to evaluate — and the registered `ArchMetaLanguage`'s hooks
+      are unreachable by construction (each one errors, explaining why;
+      `↑`/`↓` refuse outright — arch has no runtime). `metaarch-expand
+      expand` now handles `.arch.quilt` files (bin/expand is uniform again,
+      writing `examples/hello.arch`), and the generate path converges on the
+      registry: the CLI loads `.arch.quilt` directly — registry parse →
+      expand → coparse → ordinary parser → `SystemSpec` — and round-trips
+      fully annotated plain `.arch` files through the registry as a
+      convergence assertion
 - [ ] tree-sitter-arch grammar + LSP wiring for highlighting and diagnostics
       in editors (quilt-lsp multiplexes the embedded languages)
 
@@ -142,6 +162,23 @@ and `bin/smoke` — 9/9 routes pass.
 examples/hello.arch.quilt` parses an `.arch.quilt` file whose impl body is a
 real tree-sitter-parsed `rust↖…↗` quote, through the same dynamic registry
 that `bin/expand` now uses for every generator.
+
+**Demo (4c works):** `examples/shop.arch` spells the gateway's fragment
+`impl get /hello rust↖ … ↗`; `check` rejects `let x = ;` inside the brackets
+with a tree-sitter-backed positioned error, and `generate` splices the
+parsed expression term into the handler — emitting bytes identical to the
+4a text-append for the whole shop. `bin/smoke`: 9/9 routes pass.
+
+**Demo (4d works):** `bin/main generate examples/hello.arch.quilt` builds the
+hello system straight from the quilt file — the spec is derived from the
+expanded term's coparse, and the `system.arch` snapshot it leaves is plain
+arch, so the migration diff keeps working on the next run. `bin/expand` now
+expands `examples/hello.arch.quilt` to `examples/hello.arch` like any other
+`.quilt` source, and `bin/main check` accepts source, sibling, and shop
+alike. Shop's generated output is byte-identical to 4c's. (One caveat,
+inherited from quilt's quote-body reindenting: a block-opened fragment's
+closing `↗` coparses flush-left, so only inline-bodied files round-trip
+byte-for-byte — semantically identical either way.)
 
 **Demo (endgame):** an `.arch` file where one endpoint's body is written
 inline in Rust between arrow brackets, type-checked in place by the LSP.
@@ -159,7 +196,7 @@ inline in Rust between arrow brackets, type-checked in place by the LSP.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#23 as of 2026-07-19); new decisions get both an entry
+label (issues #1–#28 as of 2026-07-19); new decisions get both an entry
 here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -258,10 +295,56 @@ here and an issue.
   `QTerm` with splice holes. The closed type set, topology checks, and
   `SystemSpec` remain in `metaarch-parser`/`metaarch-spec`, which validate
   the expanded/coparsed output. Two parsers, two jobs; they converge when
-  4c derives the spec from the QTerm. Known 4b limits, revisited in 4c:
-  arch has no `MetaLanguage` yet (so `.arch.quilt` is parse-only — no
-  expansion), and `.↑` lifts into arch are impossible because quilt's rust
-  meta keys lift spellings statically per target.
+  the spec is derived from the QTerm (now the 4d MetaLanguage bullet).
+  Known 4b limits, revisited there: arch has no `MetaLanguage` yet (so
+  `.arch.quilt` is parse-only — no expansion), and `.↑` lifts into arch are
+  impossible because quilt's rust meta keys lift spellings statically per
+  target.
+- **Fragments parse where the grammars live — codegen, not spec** (2026-07-19):
+  the parser and spec crates stay quilt-free; `metaarch-codegen` (already
+  the only quilt-runtime consumer) enables quilt's `parse` feature and
+  parses `impl` fragments with the same rust/python `Language`
+  implementations quilt's own quotes use — Rust fragments as an *expression*
+  (the handler's tail), Python fragments as a statement suite, per the 4a
+  fragments-are-handler-bodies decision. `check_fragments` runs beside
+  `validate` in `metaarch check`, so a malformed fragment fails `check`
+  (never `generate`) and generators treat "fragment parses" as one more
+  established invariant. The spec still carries the fragment as a dedented
+  string: the `.arch` file stays the source of truth, and the string is
+  what the snapshot/migration path already round-trips.
+- **Optional fragment language annotation, checked against `lang`**
+  (2026-07-19): plain `.arch` accepts `impl get /x rust↖ … ↗` — the same
+  spelling a `.arch.quilt` quote uses, so a service body can move between
+  the two files unchanged. The annotation is optional (the service's `lang`
+  is the only possible default) and validation rejects a mismatch, because
+  a fragment is always spliced into its own service's generated code.
+- **arch quotes are data — demoted to plain tuples at parse** (2026-07-19):
+  quilt's ground expander evaluates a quote into host code and drops its
+  brackets — right for computational hosts, wrong for a data language whose
+  quotes *carry* syntax. `ArchPost::parse_post` therefore demotes every
+  quote plug to a coparse-identical plain tuple, so a well-formed arch host
+  contains nothing staged: `expand_lang("arch", …)` is an identity rebuild,
+  and the registered `ArchMetaLanguage`'s hooks are unreachable by
+  construction (each errors descriptively if a staged construct ever
+  arrives; `↑`/`↓` refuse — arch has no runtime to lift from or reduce
+  with). Ground `↙…↘` splices are already rejected at parse by quilt's
+  unquote-depth check.
+- **`.arch.quilt` loads via expand → coparse → ordinary parser**
+  (2026-07-19): the quilt registry owns quilt syntax; `metaarch-parser` /
+  `metaarch-spec` stay the semantic authority (closed types, topology,
+  positioned diagnostics). The CLI derives the spec from the expanded
+  term's coparse and `generate` snapshots that plain text as `system.arch`,
+  so the migration diff keeps working when the source of truth is a
+  `.arch.quilt` file.
+- **Registry convergence requires annotated fragments** (2026-07-19): quilt
+  resolves an un-annotated quote's language from the file-extension chain,
+  which a plain `.arch` file doesn't provide — an un-annotated fragment
+  body would parse as arch and fail. So the plain-`.arch` path asserts
+  registry/hand-parser agreement only when every `impl` fragment carries
+  its annotation; `shop.arch`'s python route deliberately stays
+  un-annotated to keep the optional-annotation feature exercised. A
+  quilt-side "ask the outer language for the default inner language" hook
+  would lift the limit.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and

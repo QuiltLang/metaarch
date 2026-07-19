@@ -8,5 +8,6 @@ license.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 metaarch-codegen.workspace = true
+metaarch-expand = {path = "../metaarch-expand"}
 metaarch-parser.workspace = true
 metaarch-spec.workspace = true

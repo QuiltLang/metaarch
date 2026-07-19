@@ -1,9 +1,12 @@
 # A .arch.quilt file: arch parsed as a *dynamically registered* quilt
 # language (phase 4b). The impl fragment below is not an opaque string here —
-# it is a real rust quote, parsed by tree-sitter inside the arch tree:
-#   cargo run -p metaarch-expand -- parse examples/hello.arch.quilt
-# Expansion of arch hosts (splicing the quote into generated code) arrives
-# with phase 4c's arch MetaLanguage.
+# it is a real rust quote, parsed by tree-sitter inside the arch tree. An
+# arch host is data — it stages no computation — so expansion (phase 4d) is
+# an identity rebuild that writes the plain .arch sibling this file spells:
+#   cargo run -p metaarch-expand -- expand examples/hello.arch.quilt
+# and the metaarch CLI consumes this file directly (check/generate load
+# .arch.quilt through the same registry, deriving the spec from the
+# expanded term's coparse).
 system hello
 
 service greeter {

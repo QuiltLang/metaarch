@@ -15,7 +15,10 @@
 //! can be filled with plugs. That is exactly what quilt needs to let host
 //! metaprograms quote arch (`arch↖ … ↗`) and to parse `.arch.quilt` files,
 //! where an `impl` route's fragment arrives as a nested quote (the phase-4c
-//! mechanism the 4a escape hatch was shaped for).
+//! mechanism the 4a escape hatch was shaped for). Quote plugs are demoted to
+//! plain tuples on the way in (see [`ArchMetaLanguage`]): in arch a quote is
+//! carried syntax, never staged computation, and demotion is what lets
+//! quilt's expander treat an arch host as identity (phase 4d).
 //!
 //! Structure is kept where splices need it: tuples for the container
 //! productions (`arch_file`, `service`, `database`, `table`, `event`,
@@ -33,7 +36,8 @@
 use std::sync::Arc;
 
 use quilt::lang::{Arity, FlatNode, Hole, InnerKind, Language, LanguagePost};
-use quilt::prelude::{bx, cmd, leaf, miette, tuple, write, QTerm, Result, HOLE, NL};
+use quilt::meta::MetaLanguage;
+use quilt::prelude::{bx, cmd, leaf, miette, tuple, write, Index, QTerm, Result, HOLE, NL};
 use quilt::term::CmdOrHole;
 
 /// The canonical language name to register under (`add_lang(LANG, …)`).
@@ -682,6 +686,21 @@ impl LanguagePost for ArchPost {
     }
 
     fn parse_post(&self, plugs: &[Arc<QTerm>]) -> Result<Arc<QTerm>> {
+        /// In arch, quotation is *data*: a `lang↖ … ↗` in an arch file carries
+        /// syntax (an impl fragment), it never stages computation. A plug that
+        /// arrives as a [`QTerm::Quote`] is therefore demoted to a plain tuple
+        /// with the same commands and body — coparse-identical, but invisible
+        /// to quilt's ground expander, which would otherwise evaluate the
+        /// quote and drop its brackets. This is what makes expanding an arch
+        /// host an identity pass (phase 4d). Unquote plugs stay: under a
+        /// meta-host quoting arch, `↙…↘` really is a splice.
+        fn demote(plug: &Arc<QTerm>) -> Arc<QTerm> {
+            match &**plug {
+                QTerm::Quote { tag, term, cmds, .. } => tuple(tag, &[term.clone()], cmds),
+                _ => plug.clone(),
+            }
+        }
+
         fn fill<'a>(
             qterm: &QTerm,
             plugs: &mut impl Iterator<Item = &'a Arc<QTerm>>,
@@ -719,7 +738,7 @@ impl LanguagePost for ArchPost {
                 )),
                 QTerm::Tuple { tag, terms, cmds } => {
                     if &**tag == HOLE_TAG {
-                        return plugs.next().expect("plug per hole").clone();
+                        return demote(plugs.next().expect("plug per hole"));
                     }
                     tuple(
                         tag,
@@ -793,6 +812,77 @@ impl Language for ArchLanguage {
 
 /**************************************************************/
 
+/// arch as a quilt *meta*-language, registered beside [`ArchLanguage`]
+/// (`multi.add_meta(metaarch_lang::LANG, …)`) so `expand_lang("arch", …)`
+/// works — the phase-4d half of the dynamic registration.
+///
+/// arch is a data language: it stages no computation, so expanding an arch
+/// host is an identity rebuild. [`ArchPost::parse_post`] demotes quote plugs
+/// to plain tuples, which means a well-formed arch term reaching the expander
+/// contains no quote or unquote nodes at all and none of the hooks below can
+/// fire. Each one therefore reports *why* it is unreachable: a quote or tuple
+/// arriving here means a staged construct survived parsing (a metaarch-lang
+/// bug), an unquote means a splice with no ground value to fill it, and
+/// `↑`/`↓` have no spelling because arch has no runtime to lift from or
+/// reduce with.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ArchMetaLanguage;
+
+impl MetaLanguage for ArchMetaLanguage {
+    fn expand_quote(
+        &self,
+        _lang1: &str,
+        _tag: &str,
+        _i: Index,
+        lang2: &str,
+        _qterm: &Arc<QTerm>,
+        _cmds: &[CmdOrHole],
+    ) -> Result<Arc<QTerm>> {
+        Err(miette!(
+            "arch stages no computation: a `{lang2}↖ … ↗` quote in arch is data \
+             and should have been demoted at parse time (metaarch-lang bug)"
+        ))
+    }
+
+    fn expand_unquote(
+        &self,
+        _lang1: &str,
+        _tag: &str,
+        _i: Index,
+        _lang2: &str,
+        _qterm: &Arc<QTerm>,
+        _cmds: &[CmdOrHole],
+    ) -> Result<Arc<QTerm>> {
+        Err(miette!(
+            "arch has no ground values to splice: `↙ … ↘` cannot appear in an arch host"
+        ))
+    }
+
+    fn expand_tuple(
+        &self,
+        _lang1: &str,
+        tag: &str,
+        _qterms: &[Arc<QTerm>],
+        _cmds: &[CmdOrHole],
+        _arity: Arity,
+    ) -> Result<Arc<QTerm>> {
+        Err(miette!(
+            "arch stages no computation: `{tag}` reached quilt's staged expansion, \
+             which means a quote survived parsing undemoted (metaarch-lang bug)"
+        ))
+    }
+
+    fn lift_str(&self, _target: &str) -> Result<&'static str> {
+        Err(miette!("arch has no runtime: `↑` cannot appear in arch code"))
+    }
+
+    fn reduce_str(&self, _target: &str) -> Result<&'static str> {
+        Err(miette!("arch has no runtime: `↓` cannot appear in arch code"))
+    }
+}
+
+/**************************************************************/
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -857,6 +947,36 @@ mod tests {
             filled.coparse(),
             "service s { lang rust impl get /hello \"hi\" }"
         );
+    }
+
+    #[test]
+    fn quote_plugs_demote_to_plain_tuples() {
+        let code = [
+            FlatNode::Str("service s { lang rust impl get /hello "),
+            FlatNode::Hole,
+            FlatNode::Str(" }"),
+        ];
+        let post = ArchLanguage.parse_pre(None, &code).unwrap();
+        let quote = Arc::new(quilt::qterm::qquote_at(
+            "impl_fragment",
+            1,
+            "rs",
+            leaf("string_literal", "\"hi\""),
+            &[cmd(write("rust")), cmd(write("↖")), HOLE, cmd(write("↗"))],
+            None,
+        ));
+        let filled = post.parse_post(&[quote]).unwrap();
+        assert_eq!(
+            filled.coparse(),
+            "service s { lang rust impl get /hello rust↖\"hi\"↗ }"
+        );
+        fn no_staging(t: &QTerm) -> bool {
+            match t {
+                QTerm::Quote { .. } | QTerm::Unquote { .. } => false,
+                QTerm::Tuple { terms, .. } => terms.iter().all(|t| no_staging(t)),
+            }
+        }
+        assert!(no_staging(&filled), "quote plug survived demotion");
     }
 
     #[test]

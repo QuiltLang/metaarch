@@ -12,6 +12,7 @@
 use metaarch_spec::{Engine, EventType, Lang, Service, SystemSpec, Ty};
 
 mod cargo_lock;
+mod fragment;
 mod migrations;
 mod seed;
 mod sql;
@@ -26,6 +27,7 @@ mod rust_service;
 mod smoke;
 mod system;
 
+pub use fragment::check_fragments;
 pub use migrations::migrations;
 
 /// One generated file, relative to the generated system's root.
@@ -69,9 +71,10 @@ impl Artifact {
 }
 
 /// Generate every artifact for a validated spec. Call only after
-/// `metaarch_spec::validate` reports no errors: generators rely on the
-/// invariants it establishes (every service has a lang, every consumed event
-/// is emitted somewhere, tables have exactly one pk).
+/// `metaarch_spec::validate` and [`check_fragments`] report no errors:
+/// generators rely on the invariants they establish (every service has a
+/// lang, every consumed event is emitted somewhere, tables have exactly one
+/// pk, every `impl` fragment parses in its service's language).
 pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
     let mut artifacts = system::artifacts(spec);
     artifacts.extend(nix::artifacts(spec));
@@ -271,22 +274,6 @@ pub(crate) fn sql_ty(ty: &Ty, engine: Engine) -> &'static str {
         (Ty::Timestamp, Engine::Postgres) => "TIMESTAMPTZ",
         (Ty::Timestamp, Engine::Sqlite) => "TEXT",
     }
-}
-
-/// Re-indent an opaque `impl` fragment by `n` spaces (blank lines stay
-/// empty), for splicing into a generated handler body.
-pub(crate) fn indent(text: &str, n: usize) -> String {
-    let pad = " ".repeat(n);
-    text.lines()
-        .map(|line| {
-            if line.trim().is_empty() {
-                String::new()
-            } else {
-                format!("{pad}{line}")
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
 }
 
 /// The standard do-not-edit header, per comment syntax.

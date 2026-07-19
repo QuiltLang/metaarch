@@ -134,7 +134,7 @@ generated system before `nix build` so the source copy filters `target/`).
 | `table` | DDL + seed rows + migration steps; Rust structs + query helpers (phase 4) |
 | `emits E { ... }` | Rust struct / Python dataclass for `E`, client `emit_e` method, emit route, smoke check, docs entry |
 | `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |
-| `impl get /x ↖…↗` | route + handler with the inline fragment as its body, smoke check, docs row |
+| `impl get /x rust↖…↗` | route + handler with the parsed inline fragment as its body, smoke check, docs row |
 | whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, README, `system.arch` snapshot |
 
 ## Event transport (MVP)
@@ -158,9 +158,10 @@ Concretely, every service (either language) serves the same route shape:
 - `POST /events/<E>` — on each consumer of `E`: parse into the typed
   struct/dataclass and log the delivery.
 - any `impl` route the service declares (phase 4a) — the inline fragment
-  becomes the handler body. Fragments are opaque strings, so their handlers
-  are appended to the generated file as text (not built as terms) and wired
-  into the router/dispatch by generated name (`impl_<method>_<path>`).
+  becomes the handler body. Since phase 4c the fragment is parsed with the
+  real grammar of the service's language (`metaarch-codegen`'s `fragment`
+  module) and the term is spliced into a builder-built handler; the route is
+  wired into the router/dispatch by generated name (`impl_<method>_<path>`).
 
 Services without a declared `port` listen on a deterministic fallback
 (`9000 + index` of the service in the file), so every consumer is

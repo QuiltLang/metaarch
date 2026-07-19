@@ -119,15 +119,21 @@ impl std::fmt::Display for Method {
 }
 
 /// An `impl` entry: a route whose handler body is written inline in the
-/// `.arch` file between `↖ … ↗` and carried as an opaque, dedented string in
-/// the service's implementation language (the phase-4 escape hatch; inline
-/// quotes replace the string later). The fragment is the *body* of the
+/// `.arch` file between `↖ … ↗`, optionally annotated with its language
+/// (`rust↖ … ↗` — the same spelling a `.arch.quilt` quote uses). The body is
+/// carried here as a dedented string; the generators parse it with the real
+/// grammar of the service's language and splice the resulting term (phase
+/// 4c — no longer an opaque text append). The fragment is the *body* of the
 /// handler: in Rust the tail expression of an `impl IntoResponse` fn, in
 /// Python a function body that returns the response text.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplRoute {
     pub method: Method,
     pub path: String,
+    /// Explicit fragment-language annotation (`rust↖`/`python↖`), if any.
+    /// Validation requires it to match the service's `lang` — a fragment is
+    /// always spliced into its own service's generated code.
+    pub frag_lang: Option<Lang>,
     pub body: String,
     pub span: Span,
 }

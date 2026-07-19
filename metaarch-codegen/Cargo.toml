@@ -6,7 +6,10 @@ license.workspace = true
 
 [dependencies]
 metaarch-spec.workspace = true
-# Runtime-only (no tree-sitter): the `rust` feature provides `qlift`/`name`;
-# the `LiftTo` markers for the Python/Bash targets need no feature. Parsing of
-# the `.rs.quilt` sources happens at expansion time via `bin/expand`.
-quilt = {workspace = true, features = ["rust"]}
+# `rust` provides `qlift`/`name`; the `LiftTo` markers for the Python/Bash
+# targets need no feature. Parsing of the `.rs.quilt` sources still happens at
+# expansion time via `bin/expand` — but since phase 4c the generators also
+# parse `impl` fragments with the real grammars at generation time, so
+# `parse` (which vendors the rust + python tree-sitter parsers) and `python`
+# (which exposes the python `Language`) are enabled too.
+quilt = {workspace = true, features = ["parse", "python", "rust"]}
