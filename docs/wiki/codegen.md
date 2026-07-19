@@ -131,7 +131,7 @@ generated system before `nix build` so the source copy filters `target/`).
 | `service` + `lang rust` | axum crate: routes, health + peers endpoints, typed peer clients |
 | `service` + `lang python` | python package: consumer loop, typed handlers |
 | `port` | bind config, `bin/main` orchestration entry, smoke-test URL |
-| `db` block | `sql/schema.sql` + `sql/seed.sql` (per engine), `sql/migrations/` diffs, db provisioning in `nix/` (phase 3) |
+| `db` block | `sql/schema.sql` + `sql/seed.sql` (per engine), `sql/migrations/` diffs, db provisioning in `nix/` (phase 3), `analytics/<table>.wgsl` compute shaders |
 | `table` | DDL + seed rows + migration steps; Rust structs + query helpers (phase 4) |
 | `emits E { ... }` | Rust struct / Python dataclass for `E`, client `emit_e` method, emit route, smoke check, docs entry |
 | `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |

@@ -206,9 +206,12 @@ quilt-lsp hook — logged in the decisions below.
 
 ## Stretch
 
-- WGSL analytics service: a generator that emits compute shaders specialized
-  to a table's schema (quilt's wgsl target) — GPU-accelerated aggregation
-  from the same `.arch` source
+- [x] WGSL analytics: `<svc>/analytics/<table>.wgsl` — a compute shader per
+      table specialized to its schema (quilt's wgsl target), aggregating the
+      numeric columns (sum for `int`/`money`, true-count for `bool`) with a
+      row-count, ready for any wgpu host to bind and dispatch. Emitted
+      shaders parse with quilt's wgsl grammar (asserted by test) and pass
+      full naga validation
 - [x] Architecture visualizer: `docs/topology.svg` — service boxes
       (lang-accented), an arrow lane per event from emitter to every
       consumer, a cylinder per database — generated beside the docs page
@@ -227,8 +230,8 @@ quilt-lsp hook — logged in the decisions below.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31, #33, #34, and #36 as of 2026-07-19); new decisions
-get both an entry here and an issue.
+label (issues #1–#31, #33, #34, #36, and #37 as of 2026-07-19); new
+decisions get both an entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
   with a hand-rolled parser so the DSL ships without touching quilt;
@@ -402,6 +405,20 @@ get both an entry here and an issue.
   behind an upstream hook. The nvim injection query covers annotated
   fragments only (a query can't reach the sibling `lang` entry); un-annotated
   ones are covered by the LSP semantic tokens.
+- **Analytics ships shaders, not a wgpu service** (2026-07-19): the WGSL
+  stretch item emits `analytics/<table>.wgsl` files, and the generated
+  systems stay wgpu-free — a GPU host would explode the closed dependency
+  set behind the vendored canonical `Cargo.lock`. The schema reaches the
+  shader through the wgsl target's covered splice positions only
+  (expressions, statements, heterogeneous lifts — struct members and
+  bindings are identifier positions with no tested splices): the buffer
+  layout is a fixed row-major `i32` array with a lifted `N_COLS`, column
+  selection (`int`/`money`/`bool`; `bool` as 0/1) specializes per table, and
+  the column→index mapping is a ground comment header. Sums are `i32` —
+  WGSL atomics have no 64-bit variant. Tables with no numeric columns get
+  no shader. The codegen tests parse every emitted shader with quilt's own
+  wgsl `Language` (the `wgsl` feature joins `parse`/`python`/`rust`), and
+  the shop's shader passes full naga validation.
 - **Container images are ground Nix in the root flake** (2026-07-19): the
   `<svc>-image` packages are one static `builtins.listToAttrs (map …)` block
   over the already-spliced `services` attrset — `dockerTools.buildLayeredImage`

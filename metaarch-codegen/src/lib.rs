@@ -19,6 +19,7 @@ mod sql;
 mod viz;
 
 // Expanded from the `.rs.quilt` siblings by `bin/expand`; gitignored.
+mod analytics;
 mod clients;
 mod db;
 mod docs;
@@ -96,6 +97,7 @@ pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
         if let Some(db) = &service.db {
             artifacts.push(sql::schema(spec, service, db));
             artifacts.push(seed::seed(spec, service, db));
+            artifacts.extend(analytics::artifacts(spec, service, db));
         }
     }
     artifacts
