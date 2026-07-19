@@ -136,6 +136,10 @@ between arrow brackets, type-checked in place by the LSP.
 
 ## Decisions log
 
+Every decision here is also filed as a GitHub issue with the `decision`
+label (issues #1–#17 as of 2026-07-19); new decisions get both an entry
+here and an issue.
+
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
   with a hand-rolled parser so the DSL ships without touching quilt;
   integrate in phase 4 for inline languages.
