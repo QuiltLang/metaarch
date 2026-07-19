@@ -137,6 +137,7 @@ generated system before `nix build` so the source copy filters `target/`).
 | `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |
 | `impl get /x rust↖…↗` | route + handler with the parsed inline fragment as its body, smoke check, docs row |
 | whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, `docs/topology.svg`, README, `system.arch` snapshot |
+| each service, in the root flake | `packages.<svc>` build, `nix run` app, `nixosModules.<svc>`, `packages.<svc>-image` container image |
 
 ## Event transport (MVP)
 

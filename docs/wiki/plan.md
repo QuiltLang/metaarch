@@ -218,14 +218,17 @@ quilt-lsp hook — logged in the decisions below.
       field lists, trailing commas in block lists) while preserving comments,
       blank-line groupings, and each fragment's block/inline spelling;
       unparseable files are refused untouched
-- Container images per service (`dockerTools.buildLayeredImage` in the root
-  flake) — the NixOS modules cover deployment for now
+- [x] Container images per service: `packages.<svc>-image` in the root
+      flake (`nix build .#orders-image` → a loadable `docker load` tarball
+      via `dockerTools.buildLayeredImage`, the service's closure as layers).
+      Like the NixOS modules they build on Linux; a darwin host wants a
+      linux builder
 
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31, #33, and #34 as of 2026-07-19); new decisions get
-both an entry here and an issue.
+label (issues #1–#31, #33, #34, and #36 as of 2026-07-19); new decisions
+get both an entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
   with a hand-rolled parser so the DSL ships without touching quilt;
@@ -399,6 +402,16 @@ both an entry here and an issue.
   behind an upstream hook. The nvim injection query covers annotated
   fragments only (a query can't reach the sibling `lang` entry); un-annotated
   ones are covered by the LSP semantic tokens.
+- **Container images are ground Nix in the root flake** (2026-07-19): the
+  `<svc>-image` packages are one static `builtins.listToAttrs (map …)` block
+  over the already-spliced `services` attrset — `dockerTools.buildLayeredImage`
+  with `config.Cmd = [ "${services.${name}}/bin/${name}" ]`, so the image
+  layers are exactly the service's closure (the python services' flake-source
+  store path rides along via the closure, nothing hand-listed). Zero new
+  splice positions: the whole block is ground Nix inside the existing quote,
+  keeping the three-splice-positions rule intact. Images build where Linux
+  derivations build — on darwin that means a linux builder, same as the
+  NixOS modules.
 - **`fmt` is the parser's grammar walk over a comment-keeping token stream**
   (2026-07-19): the lexer now emits `#` comments as tokens (the parser
   filters them out; the formatter is who asks for them), and `fmt.rs`
