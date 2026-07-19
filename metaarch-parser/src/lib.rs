@@ -10,6 +10,7 @@ use metaarch_spec::{
     Ty,
 };
 
+pub mod fmt;
 mod lex;
 
 use lex::{Lexer, Tok, Token};
@@ -39,10 +40,9 @@ struct Parser {
 
 impl Parser {
     fn new(src: &str) -> Result<Self, ParseError> {
-        Ok(Parser {
-            tokens: Lexer::new(src).lex()?,
-            pos: 0,
-        })
+        let mut tokens = Lexer::new(src).lex()?;
+        tokens.retain(|t| !matches!(t.tok, Tok::Comment(_)));
+        Ok(Parser { tokens, pos: 0 })
     }
 
     fn peek(&self) -> &Token {

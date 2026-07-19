@@ -35,6 +35,48 @@ enum Cmd {
         #[arg(short, long, default_value = "out")]
         out: PathBuf,
     },
+    /// Rewrite .arch files in the canonical style (comments survive).
+    Fmt {
+        files: Vec<PathBuf>,
+        /// Don't write; exit nonzero if any file isn't canonically formatted.
+        #[arg(long)]
+        check: bool,
+    },
+}
+
+fn fmt(files: &[PathBuf], check_only: bool) -> anyhow::Result<ExitCode> {
+    let mut dirty = false;
+    for file in files {
+        let name = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default();
+        if name.ends_with(".quilt") {
+            // A `.arch.quilt` file is quilt syntax (splices, meta blocks);
+            // its layout is the quilt toolchain's business, not ours.
+            anyhow::bail!("{}: fmt handles plain .arch files only", file.display());
+        }
+        let src = std::fs::read_to_string(file)
+            .with_context(|| format!("failed to read {}", file.display()))?;
+        let formatted = metaarch_parser::fmt::format(&src)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+        if formatted == src {
+            continue;
+        }
+        dirty = true;
+        if check_only {
+            println!("would reformat {}", file.display());
+        } else {
+            std::fs::write(file, &formatted)
+                .with_context(|| format!("failed to write {}", file.display()))?;
+            println!("reformatted {}", file.display());
+        }
+    }
+    Ok(if dirty && check_only {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 /// A loaded architecture: the spec plus the plain `.arch` text it was derived
@@ -200,5 +242,6 @@ fn main() -> anyhow::Result<ExitCode> {
             );
             Ok(ExitCode::SUCCESS)
         }
+        Cmd::Fmt { files, check } => fmt(&files, check),
     }
 }

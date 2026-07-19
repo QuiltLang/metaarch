@@ -40,4 +40,6 @@ Phases 0–3 are done (parse → validate → generate → Nix deployment), and
 phase 4 — arch as a first-class quilt language — is complete through 4e:
 inline `impl` fragments, dynamic registration, real-AST fragments, the arch
 `MetaLanguage`, and editor support via `tree-sitter-arch` + `metaarch-lsp`.
+Stretch work has begun: generated systems now include an SVG topology
+diagram in their docs, and `bin/main fmt` formats `.arch` files canonically.
 See the [plan](plan.md) for the demos and the decisions log.

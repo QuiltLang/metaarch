@@ -213,15 +213,19 @@ quilt-lsp hook — logged in the decisions below.
       (lang-accented), an arrow lane per event from emitter to every
       consumer, a cylinder per database — generated beside the docs page
       and inlined into its Topology section
-- `metaarch fmt` for `.arch` files
+- [x] `metaarch fmt` for `.arch` files: `bin/main fmt [--check]` re-prints
+      a file in the canonical style (two-space indent, width-80 inline/block
+      field lists, trailing commas in block lists) while preserving comments,
+      blank-line groupings, and each fragment's block/inline spelling;
+      unparseable files are refused untouched
 - Container images per service (`dockerTools.buildLayeredImage` in the root
   flake) — the NixOS modules cover deployment for now
 
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31 and #33 as of 2026-07-19); new decisions get both an
-entry here and an issue.
+label (issues #1–#31, #33, and #34 as of 2026-07-19); new decisions get
+both an entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
   with a hand-rolled parser so the DSL ships without touching quilt;
@@ -395,6 +399,17 @@ entry here and an issue.
   behind an upstream hook. The nvim injection query covers annotated
   fragments only (a query can't reach the sibling `lang` entry); un-annotated
   ones are covered by the LSP semantic tokens.
+- **`fmt` is the parser's grammar walk over a comment-keeping token stream**
+  (2026-07-19): the lexer now emits `#` comments as tokens (the parser
+  filters them out; the formatter is who asks for them), and `fmt.rs`
+  mirrors the parser function-for-function, re-printing tokens instead of
+  building a spec — so there is no third grammar and no CST to maintain, and
+  a `formatting_preserves_the_spec` test (span-stripped spec equality) keeps
+  the walk honest. `format` runs the real parser first, so fmt can never
+  mangle a file it doesn't understand. Field-list layout is fmt's to choose
+  (inline iff the line fits 80 columns); a fragment body's block/inline
+  spelling is the author's — it is foreign code, and the spec dedents it
+  anyway, which is also why re-indenting bodies is semantics-preserving.
 - **The topology diagram is plain-Rust SVG, standalone + inlined** (2026-07-19):
   the visualizer builds its SVG as ground strings in `viz.rs` (the `sql.rs`
   precedent), not as a quilt quote — every spec-driven value in an SVG lands
