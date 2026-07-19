@@ -1,0 +1,10 @@
+[package]
+name = "metaarch-lang"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+# Core only (no tree-sitter, no built-in languages): the `Language` trait,
+# `QTerm`, and the string-command machinery are all unfeatured.
+quilt.workspace = true

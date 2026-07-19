@@ -11,8 +11,10 @@ Generators are **quilt metaprograms**: `.rs.quilt` sources in
 with unquotes and lifts. This is the nanobots pattern:
 
 - `.rs.quilt` files live next to their expanded `.rs` siblings (gitignored)
-- `bin/expand` re-expands them via the sibling quilt checkout (`$QUILT`
-  overrides); run it after editing any `.quilt` source, before `cargo build`
+- `bin/expand` re-expands them via `metaarch-expand`, the workspace's own
+  expander binary — quilt's built-in languages plus `arch` registered
+  dynamically (`DictMulti::add_lang`, phase 4b); run it after editing any
+  `.quilt` source, before `cargo build`
 - the expanded generators compile into `metaarch-codegen` as ordinary Rust,
   so `metaarch generate` is one static binary calling generator functions
 

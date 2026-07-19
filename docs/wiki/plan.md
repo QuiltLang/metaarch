@@ -117,11 +117,16 @@ decision below):
       own language, carried as an opaque dedented string, spliced into the
       generated service, and covered by docs rows, smoke checks, and route
       validation
-- [ ] Register arch as a *dynamic* quilt language: quilt grows a
-      `Box<dyn Language>` registration hook (local experiments only — never
-      pushed to quilt from here), and metaarch implements the trait and
-      hooks arch in from its side, so `.arch.quilt` files parse and arch
-      fragments can be quoted from host metaprograms
+- [x] Register arch as a *dynamic* quilt language — and it took **zero
+      quilt changes**: the `Box<dyn Language>` hook already exists at the
+      pinned rev (`DictMulti::add_lang`). `metaarch-lang` implements the
+      `Language` trait by hand (flat-node lexer + recursive descent to
+      `QTerm`, trivia-preserving, holes at name/value/entry/field/fragment
+      positions); `metaarch-expand` registers it beside the built-in set and
+      now drives `bin/expand` (its output is byte-identical to the quilt
+      CLI's). `.arch.quilt` files parse — with `impl` fragments as real
+      parsed `rust↖…↗` quotes — and host metaprograms can quote and splice
+      arch (`arch↖system ↙name↘ …↗`)
 - [ ] Inline quotes inside `.arch`: `rust↖ ... ↗` bodies on services/handlers,
       spliced into the generated code at expansion time — replacing the
       string escape hatch with real ASTs
@@ -132,6 +137,11 @@ decision below):
 `impl get /hello ↖ "hello from an inline fragment!\n" ↗` and the notifier a
 Python `/stats` route; one `generate` wires both into router/dispatch, docs,
 and `bin/smoke` — 9/9 routes pass.
+
+**Demo (4b works):** `cargo run -p metaarch-expand -- parse
+examples/hello.arch.quilt` parses an `.arch.quilt` file whose impl body is a
+real tree-sitter-parsed `rust↖…↗` quote, through the same dynamic registry
+that `bin/expand` now uses for every generator.
 
 **Demo (endgame):** an `.arch` file where one endpoint's body is written
 inline in Rust between arrow brackets, type-checked in place by the LSP.
@@ -149,7 +159,7 @@ inline in Rust between arrow brackets, type-checked in place by the LSP.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#20 as of 2026-07-19); new decisions get both an entry
+label (issues #1–#23 as of 2026-07-19); new decisions get both an entry
 here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -235,6 +245,23 @@ here and an issue.
   gets a `Box<dyn Language>` dynamic-registration hook and metaarch
   registers arch through it. Any quilt-side changes are prototyped locally
   and never pushed from this project.
+- **The hook already existed — `metaarch-expand` replaces the sibling CLI**
+  (2026-07-19): at the pinned rev, `DictMulti::add_lang` *is* the
+  `Box<dyn Language>` hook, so 4b shipped with zero quilt changes. What was
+  actually missing was a driver: quilt's stock CLI is hardwired to the
+  closed `Omni` set, so the workspace grew `metaarch-expand` (~60 lines of
+  library glue) and `bin/expand` now runs it — proven by byte-identical
+  re-expansion of every existing generator.
+- **The arch `Language` is syntax; `metaarch-spec` stays the semantics**
+  (2026-07-19): the quilt-side parser (`metaarch-lang`) is deliberately
+  loose — any identifier parses as a type — and produces a trivia-preserving
+  `QTerm` with splice holes. The closed type set, topology checks, and
+  `SystemSpec` remain in `metaarch-parser`/`metaarch-spec`, which validate
+  the expanded/coparsed output. Two parsers, two jobs; they converge when
+  4c derives the spec from the QTerm. Known 4b limits, revisited in 4c:
+  arch has no `MetaLanguage` yet (so `.arch.quilt` is parse-only — no
+  expansion), and `.↑` lifts into arch are impossible because quilt's rust
+  meta keys lift spellings statically per target.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and
