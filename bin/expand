@@ -1,16 +1,13 @@
 #!/usr/bin/env sh
 # Expand every *.quilt source to its generated sibling — via metaarch-expand,
 # the workspace's own expander, which registers `arch` as a dynamic quilt
-# language on top of the built-in set (docs/wiki/plan.md, phase 4b).
-# `.arch.quilt` files are parse-checked only until arch grows a MetaLanguage
-# (phase 4d). Run after a fresh checkout and after editing any *.quilt,
-# before `cargo build`.
+# language (Language + MetaLanguage) on top of the built-in set
+# (docs/wiki/plan.md, phases 4b/4d). `.arch.quilt` files expand too: an arch
+# host is data, so its expansion is the plain `.arch` file it spells. Run
+# after a fresh checkout and after editing any *.quilt, before `cargo build`.
 set -e
 cd "$(dirname "$0")/.."
 
 find . -name '*.quilt' -not -path './target/*' -not -path './out/*' | sort | while read -r f; do
-  case "$f" in
-    *.arch.quilt) cargo run -q -p metaarch-expand -- parse "$f" ;;
-    *) cargo run -q -p metaarch-expand -- expand "$f" ;;
-  esac
+  cargo run -q -p metaarch-expand -- expand "$f"
 done

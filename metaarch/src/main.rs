@@ -1,5 +1,6 @@
 //! The metaarch CLI: parse, validate, and generate a full distributed
-//! system from a `.arch` description. `bin/main` wraps this.
+//! system from a `.arch` description — or a `.arch.quilt` one, loaded
+//! through the quilt registry (phase 4d). `bin/main` wraps this.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -23,11 +24,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Parse and validate a .arch file; print diagnostics.
+    /// Parse and validate a .arch or .arch.quilt file; print diagnostics.
     Check { file: PathBuf },
-    /// Parse a .arch file and print the SystemSpec.
+    /// Parse a .arch or .arch.quilt file and print the SystemSpec.
     Dump { file: PathBuf },
-    /// Validate a .arch file, then generate the runnable system.
+    /// Validate a .arch or .arch.quilt file, then generate the runnable system.
     Generate {
         file: PathBuf,
         /// Output directory for the generated system.
@@ -36,14 +37,63 @@ enum Cmd {
     },
 }
 
-fn load(file: &PathBuf) -> anyhow::Result<metaarch_spec::SystemSpec> {
+/// A loaded architecture: the spec plus the plain `.arch` text it was derived
+/// from — the source itself for `.arch` files, the expanded term's coparse
+/// for `.arch.quilt` ones. The plain text is what `generate` snapshots as
+/// `system.arch` (the snapshot must reparse with the ordinary parser on the
+/// next run).
+struct Loaded {
+    spec: metaarch_spec::SystemSpec,
+    plain: String,
+}
+
+fn load(file: &PathBuf) -> anyhow::Result<Loaded> {
     let src = std::fs::read_to_string(file)
         .with_context(|| format!("failed to read {}", file.display()))?;
-    metaarch_parser::parse(&src).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))
+    let name = file
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    if name.ends_with(".quilt") {
+        // Only the quilt registry understands a `.arch.quilt` file, so it
+        // parses and expands first (identity — arch is data); the ordinary
+        // parser then derives the spec from the coparsed text, staying the
+        // semantic authority (types, topology, positioned diagnostics).
+        let plain = metaarch_expand::arch_text(name, &src)
+            .map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+        let spec = metaarch_parser::parse(&plain)
+            .map_err(|e| anyhow::anyhow!("{} (expanded): {e}", file.display()))?;
+        return Ok(Loaded { spec, plain });
+    }
+    let spec =
+        metaarch_parser::parse(&src).map_err(|e| anyhow::anyhow!("{}: {e}", file.display()))?;
+    // Convergence check (phase 4d): a plain `.arch` file must load to the
+    // same spec through the quilt registry. Possible only when every
+    // fragment carries its language annotation — quilt resolves an
+    // un-annotated quote's language from the file-extension chain, which a
+    // plain `.arch` file doesn't provide.
+    let annotated = spec
+        .services
+        .iter()
+        .flat_map(|s| &s.impls)
+        .all(|r| r.frag_lang.is_some());
+    if annotated {
+        let plain = metaarch_expand::arch_text(name, &src)
+            .map_err(|e| anyhow::anyhow!("{}: quilt registry rejects it: {e}", file.display()))?;
+        let respec = metaarch_parser::parse(&plain)
+            .map_err(|e| anyhow::anyhow!("{}: registry round-trip broke it: {e}", file.display()))?;
+        if respec != spec {
+            anyhow::bail!(
+                "{}: the quilt registry and the ordinary parser disagree on this file (metaarch bug)",
+                file.display()
+            );
+        }
+    }
+    Ok(Loaded { spec, plain: src })
 }
 
 fn check(file: &PathBuf) -> anyhow::Result<ExitCode> {
-    let spec = load(file)?;
+    let spec = load(file)?.spec;
     let mut diags = validate(&spec);
     // Fragment syntax lives with the generators (they own the real
     // grammars); a malformed `impl` body fails `check`, not `generate`.
@@ -95,7 +145,7 @@ fn main() -> anyhow::Result<ExitCode> {
     match Cli::parse().cmd {
         Cmd::Check { file } => check(&file),
         Cmd::Dump { file } => {
-            let spec = load(&file)?;
+            let spec = load(&file)?.spec;
             println!("{spec:#?}");
             Ok(ExitCode::SUCCESS)
         }
@@ -105,7 +155,8 @@ fn main() -> anyhow::Result<ExitCode> {
             if code != ExitCode::SUCCESS {
                 return Ok(code);
             }
-            let spec = load(&file)?;
+            let loaded = load(&file)?;
+            let spec = loaded.spec;
             let root = out.join(&spec.name);
 
             // Migrations diff against the `system.arch` snapshot the previous
@@ -126,9 +177,7 @@ fn main() -> anyhow::Result<ExitCode> {
                     ),
                 }
             }
-            artifacts.push(metaarch_codegen::Artifact::snapshot(std::fs::read_to_string(
-                &file,
-            )?));
+            artifacts.push(metaarch_codegen::Artifact::snapshot(loaded.plain));
 
             for artifact in artifacts {
                 let path = root.join(&artifact.path);
