@@ -16,6 +16,7 @@ mod fragment;
 mod migrations;
 mod seed;
 mod sql;
+mod viz;
 
 // Expanded from the `.rs.quilt` siblings by `bin/expand`; gitignored.
 mod clients;
@@ -86,6 +87,7 @@ pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
     }
     artifacts.push(Artifact::script("bin/smoke", smoke::bin_smoke(spec)));
     artifacts.push(Artifact::file("docs/index.html", docs::index_html(spec)));
+    artifacts.push(Artifact::file("docs/topology.svg", viz::topology_svg_file(spec)));
     for (index, service) in spec.services.iter().enumerate() {
         match service.lang.expect("validated: service has a lang") {
             Lang::Rust => artifacts.extend(rust_service::artifacts(spec, index)),

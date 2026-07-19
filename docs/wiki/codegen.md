@@ -110,7 +110,8 @@ out/shop/
 │   ├── notifier/__main__.py    # python3 -m notifier
 │   └── notifier/events.py      # dataclasses mirroring orders/src/events.rs
 └── docs/
-    └── index.html          # GENERATED topology + API/event reference
+    ├── index.html          # GENERATED topology + API/event reference
+    └── topology.svg        #   the architecture diagram (also inlined above)
 ```
 
 The layout rule: **one service, one directory, named by the service**;
@@ -135,7 +136,7 @@ generated system before `nix build` so the source copy filters `target/`).
 | `emits E { ... }` | Rust struct / Python dataclass for `E`, client `emit_e` method, emit route, smoke check, docs entry |
 | `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |
 | `impl get /x rust↖…↗` | route + handler with the parsed inline fragment as its body, smoke check, docs row |
-| whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, README, `system.arch` snapshot |
+| whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, `docs/topology.svg`, README, `system.arch` snapshot |
 
 ## Event transport (MVP)
 

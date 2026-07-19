@@ -209,7 +209,10 @@ quilt-lsp hook — logged in the decisions below.
 - WGSL analytics service: a generator that emits compute shaders specialized
   to a table's schema (quilt's wgsl target) — GPU-accelerated aggregation
   from the same `.arch` source
-- Architecture visualizer: generated HTML/SVG topology diagram
+- [x] Architecture visualizer: `docs/topology.svg` — service boxes
+      (lang-accented), an arrow lane per event from emitter to every
+      consumer, a cylinder per database — generated beside the docs page
+      and inlined into its Topology section
 - `metaarch fmt` for `.arch` files
 - Container images per service (`dockerTools.buildLayeredImage` in the root
   flake) — the NixOS modules cover deployment for now
@@ -217,8 +220,8 @@ quilt-lsp hook — logged in the decisions below.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31 as of 2026-07-19); new decisions get both an entry
-here and an issue.
+label (issues #1–#31 and #33 as of 2026-07-19); new decisions get both an
+entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
   with a hand-rolled parser so the DSL ships without touching quilt;
@@ -392,6 +395,16 @@ here and an issue.
   behind an upstream hook. The nvim injection query covers annotated
   fragments only (a query can't reach the sibling `lang` entry); un-annotated
   ones are covered by the LSP semantic tokens.
+- **The topology diagram is plain-Rust SVG, standalone + inlined** (2026-07-19):
+  the visualizer builds its SVG as ground strings in `viz.rs` (the `sql.rs`
+  precedent), not as a quilt quote — every spec-driven value in an SVG lands
+  at *attribute* position (coordinates, sizes, the viewBox), and the html
+  target's covered splice position is text interiors (`raw_text`), per the
+  only-tested-positions rule the nix generator set. One `<svg>` element
+  serves both artifacts: written standalone as `docs/topology.svg` and
+  spliced into `docs/index.html`'s Topology section, so the page needs no
+  file fetch and the file needs no page. Layout is integer arithmetic over
+  declaration order — deterministic like every other artifact.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and
