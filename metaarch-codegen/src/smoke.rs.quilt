@@ -1,0 +1,161 @@
+//! Generator for `bin/smoke`: an end-to-end test of the generated system —
+//! boot the fleet, wait for every service's health, then curl every route
+//! the spec derives (health, peers, emit, events) with the canonical sample
+//! payloads, and report pass/fail.
+//!
+//! Unlike `bin/main` (which is for humans and dies on ctrl-C via `kill 0`),
+//! smoke tracks explicit PIDs so its own exit code survives teardown.
+//!
+//! This is the `.rs.quilt` source for the generated `smoke.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+
+#![allow(clippy::unit_arg)]
+
+use metaarch_spec::{Lang, SystemSpec};
+use quilt::prelude::*;
+
+use crate::header;
+
+pub(crate) fn bin_smoke(spec: &SystemSpec) -> String {
+    let has_rust = spec.services.iter().any(|s| s.lang == Some(Lang::Rust));
+    let has_clients = spec.services.len() > 1;
+
+    // Boot lines: like bin/main's, plus PID bookkeeping for the trap.
+    let mut starts: Vec<⟨T⟩> = Vec::new();
+    for service in &spec.services {
+        let name = service.name.clone();
+        match service.lang.expect("validated: service has a lang") {
+            Lang::Rust => starts.push(bash↖cargo run -q -p ↙name.↑↘ & PIDS="$PIDS $!"↗),
+            Lang::Python => {
+                let dir = name.clone();
+                starts.push(bash↖( cd ↙dir.↑↘ && python3 -u -m ↙name.↑↘ ) & PIDS="$PIDS $!"↗)
+            }
+        }
+    }
+
+    let mut waits: Vec<⟨T⟩> = Vec::new();
+    for (index, service) in spec.services.iter().enumerate() {
+        let addr = crate::service_addr(service, index);
+        waits.push(bash↖wait_health ↙addr.↑↘↗);
+    }
+
+    // Every route the spec derives, one check per line.
+    let mut checks: Vec<⟨T⟩> = Vec::new();
+    for (index, service) in spec.services.iter().enumerate() {
+        let addr = crate::service_addr(service, index);
+        let label = format!("{} GET /health", service.name);
+        let url = format!("http://{addr}/health");
+        checks.push(bash↖check_get ↙label.↑↘ ↙url.↑↘↗);
+        if has_clients && service.lang == Some(Lang::Rust) {
+            let label = format!("{} GET /peers", service.name);
+            let url = format!("http://{addr}/peers");
+            checks.push(bash↖check_peers ↙label.↑↘ ↙url.↑↘↗);
+        }
+    }
+    for (index, service) in spec.services.iter().enumerate() {
+        let addr = crate::service_addr(service, index);
+        for event in &service.emits {
+            let payload = crate::sample_json(event);
+            let path = crate::emit_path(&event.name);
+            let label = format!("{} POST {path}", service.name);
+            let url = format!("http://{addr}{path}");
+            let p = payload.clone();
+            checks.push(bash↖check_post ↙label.↑↘ ↙url.↑↘ ↙p.↑↘↗);
+            for (consumer_index, consumer) in spec.services.iter().enumerate() {
+                if consumer.consumes.iter().any(|(n, _)| n == &event.name) {
+                    let caddr = crate::service_addr(consumer, consumer_index);
+                    let cpath = crate::event_path(&event.name);
+                    let label = format!("{} POST {cpath}", consumer.name);
+                    let url = format!("http://{caddr}{cpath}");
+                    let p = payload.clone();
+                    checks.push(bash↖check_post ↙label.↑↘ ↙url.↑↘ ↙p.↑↘↗);
+                }
+            }
+        }
+    }
+
+    let script = bash↖
+        set -uo pipefail
+        cd "$(dirname "$0")/.."
+
+        PASS=0
+        FAIL=0
+        PIDS=""
+
+        check_get() {
+            if curl -fsS "$2" > /dev/null 2>&1; then
+                echo "ok: $1"
+                PASS=$((PASS + 1))
+            else
+                echo "FAIL: $1"
+                FAIL=$((FAIL + 1))
+            fi
+        }
+
+        check_post() {
+            if curl -fsS -X POST -H "Content-Type: application/json" -d "$3" "$2" > /dev/null 2>&1; then
+                echo "ok: $1"
+                PASS=$((PASS + 1))
+            else
+                echo "FAIL: $1"
+                FAIL=$((FAIL + 1))
+            fi
+        }
+
+        check_peers() {
+            out=$(curl -fsS "$2" 2>&1)
+            if [ $? -eq 0 ] && ! printf '%s\n' "$out" | grep -q "down$"; then
+                echo "ok: $1"
+                PASS=$((PASS + 1))
+            else
+                echo "FAIL: $1 ($out)"
+                FAIL=$((FAIL + 1))
+            fi
+        }
+
+        wait_health() {
+            tries=0
+            until curl -fsS "http://$1/health" > /dev/null 2>&1; do
+                tries=$((tries + 1))
+                if [ "$tries" -gt 100 ]; then
+                    echo "FAIL: $1 never became healthy"
+                    exit 1
+                fi
+                sleep 0.2
+            done
+        }
+
+        ↙{
+            if has_rust {
+                bash↖cargo build -q || exit 1↗.←;
+                NL.←;
+            }
+        }↘
+        trap 'kill $PIDS 2> /dev/null; wait' EXIT
+        ↙{
+            for start in starts {
+                start.←;
+                NL.←;
+            }
+        }↘
+        ↙{
+            for w in waits {
+                w.←;
+                NL.←;
+            }
+        }↘
+        ↙{
+            for check in checks {
+                check.←;
+                NL.←;
+            }
+        }↘
+        echo "$PASS passed, $FAIL failed"
+        [ "$FAIL" -eq 0 ]
+    ↗;
+    format!(
+        "#!/usr/bin/env bash\n{}\n{}",
+        header(&spec.name, "#"),
+        script.coparse()
+    )
+}

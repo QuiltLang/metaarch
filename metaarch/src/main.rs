@@ -65,6 +65,29 @@ fn check(file: &PathBuf) -> anyhow::Result<ExitCode> {
     }
 }
 
+/// How many migrations each service's `sql/migrations/` already holds, so
+/// new ones continue the numbering across `generate` runs.
+fn migration_counts(
+    root: &std::path::Path,
+    spec: &metaarch_spec::SystemSpec,
+) -> std::collections::BTreeMap<String, u32> {
+    let mut counts = std::collections::BTreeMap::new();
+    for service in &spec.services {
+        let dir = root.join(&service.name).join("sql/migrations");
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        let n = entries
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "sql"))
+            .count() as u32;
+        if n > 0 {
+            counts.insert(service.name.clone(), n);
+        }
+    }
+    counts
+}
+
 fn main() -> anyhow::Result<ExitCode> {
     match Cli::parse().cmd {
         Cmd::Check { file } => check(&file),
@@ -81,7 +104,30 @@ fn main() -> anyhow::Result<ExitCode> {
             }
             let spec = load(&file)?;
             let root = out.join(&spec.name);
-            for artifact in metaarch_codegen::generate(&spec) {
+
+            // Migrations diff against the `system.arch` snapshot the previous
+            // `generate` left in the output root (the source of truth is still
+            // the `.arch` file — the snapshot is just its last generated
+            // state). First generate: no snapshot, no migrations.
+            let mut artifacts = metaarch_codegen::generate(&spec);
+            let snapshot = root.join("system.arch");
+            if let Ok(prev_src) = std::fs::read_to_string(&snapshot) {
+                match metaarch_parser::parse(&prev_src) {
+                    Ok(prev) => {
+                        let existing = migration_counts(&root, &spec);
+                        artifacts.extend(metaarch_codegen::migrations(&prev, &spec, &existing));
+                    }
+                    Err(e) => eprintln!(
+                        "warning: {} does not parse ({e}); skipping migrations",
+                        snapshot.display()
+                    ),
+                }
+            }
+            artifacts.push(metaarch_codegen::Artifact::snapshot(std::fs::read_to_string(
+                &file,
+            )?));
+
+            for artifact in artifacts {
                 let path = root.join(&artifact.path);
                 if let Some(dir) = path.parent() {
                     std::fs::create_dir_all(dir)

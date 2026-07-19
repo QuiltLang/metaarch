@@ -44,24 +44,35 @@ bin/main` boots the shop; `curl -X POST 127.0.0.1:8081/emit/OrderPlaced -d
 '{"order_id": "…", "total": 4999}'` makes the Python notifier print the
 typed event.
 
-## Phase 2 — the full artifact fan-out (not started — next up)
+## Phase 2 — the full artifact fan-out ✅
 
 Widen what one `.arch` line touches. Each item is a new generator over the
-same `SystemSpec`. Phase 1 left the ground ready: `generate` is
-deterministic, so this phase's diff demo will work:
+same `SystemSpec`; phase 1's determinism is what makes the diff demo work:
 
-- [ ] Typed Rust **clients** for every service's API; the gateway uses them
-- [ ] **Migrations**: diff the previous generated schema, emit `ALTER` steps
-- [ ] **HTML docs**: system topology page + per-service API/event reference
-      (quilt's html target)
-- [ ] **Smoke tests**: generated bash scripts that boot the system and
-      exercise every endpoint and event path (quilt's bash target)
-- [ ] Seed data generators per table
+- [x] Typed Rust **clients** for every service's API (`src/clients.rs`: one
+      struct per peer — `health()`, `emit_x`/`deliver_x` typed by the shared
+      `events` module); every Rust service, the gateway included, uses them
+      to serve `GET /peers`, a fleet health check through the typed clients
+- [x] **Migrations**: diff the previous generated spec (the `system.arch`
+      snapshot `generate` leaves in the output root), emit numbered
+      `sql/migrations/NNNN.sql` with `CREATE`/`DROP TABLE` and
+      `ADD`/`DROP COLUMN` steps; type changes become `-- manual migration
+      required` comments
+- [x] **HTML docs**: `docs/index.html` — topology table + per-service
+      route/table reference + event contracts with sample payloads (quilt's
+      html target)
+- [x] **Smoke tests**: generated `bin/smoke` boots the fleet and curls every
+      route the spec derives — health, peers, emit, events — with the
+      canonical sample payloads (quilt's bash target)
+- [x] Seed data per table: `sql/seed.sql`, three deterministic rows
 
-**Demo:** add one field to `OrderPlaced`; show the diff touching Rust, Python,
-SQL, docs, and tests in one `generate` run.
+**Demo (works):** add `coupon_code: text` to the `orders` table and
+`OrderPlaced`; one `generate` run diffs Rust events (both services), the
+Python dataclass, SQL schema + seed, docs, `bin/smoke`, and emits
+`ALTER TABLE orders ADD COLUMN` in `sql/migrations/0001.sql`. Reverting
+emits `0002.sql` with the `DROP COLUMN`. `bin/smoke`: 7/7 routes pass.
 
-## Phase 3 — Nix deployment (not started)
+## Phase 3 — Nix deployment (not started — next up)
 
 Lean into quilt's string-based Nix host: the deployment is *generated Nix*,
 not hand-written. (Phase 1 ships a stopgap: generated systems already get a
@@ -127,3 +138,22 @@ between arrow brackets, type-checked in place by the LSP.
   strings (no uuid/chrono deps in generated services), `money` is integer
   minor units, `enum` is TEXT + CHECK in both SQL dialects. All seven types
   keep one spelling per target in `metaarch-codegen/src/lib.rs`.
+- **`system.arch` snapshot as migration base** (2026-07-18): `generate`
+  copies the source `.arch` byte-for-byte into the output root; the next run
+  reparses it with the ordinary parser and diffs specs. No snapshot format,
+  no SQL parsing, and the `.arch` file stays the only source of truth.
+  Renames read as drop + add.
+- **Automate only safe ALTERs** (2026-07-18): added/dropped tables and
+  columns become DDL (`ADD COLUMN` drops NOT NULL — existing rows need a
+  backfill first); anything lossy or engine-fragile (type/pk/enum changes,
+  engine swaps) is emitted as a `-- manual migration required` comment
+  rather than guessed at.
+- **One canonical sample value per type** (2026-07-18): seeds, smoke
+  payloads, and docs examples all derive from the same deterministic
+  per-type values (`sample_json` / `sql_literal`), so every artifact quotes
+  the same example data.
+- **Clients pull the whole event set** (2026-07-18): a Rust service's
+  `events.rs` includes every event its typed clients can carry, not just its
+  own emits/consumes — the client API is typed by the system-wide contract.
+  `GET /peers` exists so the clients are exercised (and compile-checked) by
+  generated code, not just offered.

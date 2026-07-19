@@ -1,0 +1,192 @@
+//! Generator for `docs/index.html`: the system's reference page — topology,
+//! per-service routes and tables, and the event contracts with their sample
+//! payloads (the same ones `bin/smoke` sends).
+//!
+//! This is the `.rs.quilt` source for the generated `docs.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+//!
+//! The page skeleton is an html quote; the spec-driven rows and sections are
+//! plain HTML strings built at ground and spliced in as `raw_text` (the
+//! `html_report` pattern). Everything spliced comes from `.arch` identifiers
+//! and generated JSON, so no HTML escaping is needed.
+
+#![allow(clippy::unit_arg)]
+
+use std::fmt::Write as _;
+
+use metaarch_spec::{Lang, SystemSpec};
+use quilt::prelude::*;
+
+use crate::{header, ty_arch};
+
+/// Inject a ground string as raw HTML text.
+fn raw(s: &str) -> ⟨T⟩ {
+    leaf("raw_text", s)
+}
+
+pub(crate) fn index_html(spec: &SystemSpec) -> String {
+    let title = format!("{} — metaarch", spec.name);
+    let name = spec.name.clone();
+    let event_count = spec.services.iter().map(|s| s.emits.len()).sum::<usize>();
+    let summary = format!(
+        "{} services, {} event type(s). Boot the fleet with bin/main; test every route with bin/smoke.",
+        spec.services.len(),
+        event_count
+    );
+    let topology = topology_rows(spec);
+    let services = service_sections(spec);
+    let events = event_sections(spec);
+
+    let page = html↖
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="utf-8">
+        <title>↙raw(&title)↘</title>
+        <style>
+          body { font-family: sans-serif; margin: 2rem auto; max-width: 720px; padding: 0 1rem; color: #222; }
+          h1 { font-size: 1.5rem; } h2 { font-size: 1.2rem; margin-top: 2rem; } h3 { font-size: 1rem; }
+          .meta { color: #777; font-weight: normal; font-size: 0.85em; }
+          table { border-collapse: collapse; width: 100%; margin: 0.5rem 0 1rem; }
+          th, td { border: 1px solid #ccc; padding: 4px 8px; text-align: left; font-size: 0.9rem; }
+          th { background: #eee; }
+          code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; }
+          section { margin-bottom: 1.5rem; }
+        </style>
+        </head>
+        <body>
+        <h1>↙raw(&name)↘</h1>
+        <p class="meta">↙raw(&summary)↘</p>
+        <h2>Topology</h2>
+        <table>
+        <tr><th>service</th><th>lang</th><th>address</th><th>emits</th><th>consumes</th></tr>
+        ↙raw(&topology)↘
+        </table>
+        <h2>Services</h2>
+        ↙raw(&services)↘
+        <h2>Events</h2>
+        ↙raw(&events)↘
+        </body>
+        </html>
+    ↗;
+    format!("{} -->\n{}", header(&spec.name, "<!--"), page.coparse())
+}
+
+fn dash_join(names: Vec<&str>) -> String {
+    if names.is_empty() {
+        "—".into()
+    } else {
+        names.join(", ")
+    }
+}
+
+fn topology_rows(spec: &SystemSpec) -> String {
+    let mut out = String::new();
+    for (index, service) in spec.services.iter().enumerate() {
+        let emits = dash_join(service.emits.iter().map(|e| e.name.as_str()).collect());
+        let consumes = dash_join(service.consumes.iter().map(|(n, _)| n.as_str()).collect());
+        let _ = writeln!(
+            out,
+            "<tr><td><a href=\"#svc-{name}\">{name}</a></td><td>{lang}</td><td><code>{addr}</code></td><td>{emits}</td><td>{consumes}</td></tr>",
+            name = service.name,
+            lang = service.lang.expect("validated: service has a lang"),
+            addr = crate::service_addr(service, index),
+        );
+    }
+    out
+}
+
+fn service_sections(spec: &SystemSpec) -> String {
+    let has_clients = spec.services.len() > 1;
+    let mut out = String::new();
+    for (index, service) in spec.services.iter().enumerate() {
+        let lang = service.lang.expect("validated: service has a lang");
+        let _ = writeln!(
+            out,
+            "<section id=\"svc-{name}\">\n<h3>{name} <span class=\"meta\">{lang} · {addr}</span></h3>\n<table>\n<tr><th>route</th><th>description</th></tr>\n<tr><td><code>GET /health</code></td><td>liveness</td></tr>",
+            name = service.name,
+            addr = crate::service_addr(service, index),
+        );
+        if has_clients && lang == Lang::Rust {
+            let _ = writeln!(
+                out,
+                "<tr><td><code>GET /peers</code></td><td>health of every peer, checked through the typed clients</td></tr>"
+            );
+        }
+        for event in &service.emits {
+            let _ = writeln!(
+                out,
+                "<tr><td><code>POST {path}</code></td><td>trigger <a href=\"#ev-{event}\">{event}</a>; fans out to {n} consumer(s)</td></tr>",
+                path = crate::emit_path(&event.name),
+                event = event.name,
+                n = crate::consumer_addrs(spec, &event.name).len(),
+            );
+        }
+        for (name, _) in &service.consumes {
+            let _ = writeln!(
+                out,
+                "<tr><td><code>POST {path}</code></td><td>receive <a href=\"#ev-{event}\">{event}</a></td></tr>",
+                path = crate::event_path(name),
+                event = name,
+            );
+        }
+        out.push_str("</table>\n");
+        if let Some(db) = &service.db {
+            for table in &db.tables {
+                let _ = writeln!(
+                    out,
+                    "<h4>table {} <span class=\"meta\">({})</span></h4>\n<table>\n<tr><th>field</th><th>type</th></tr>",
+                    table.name,
+                    crate::sql::engine_name(db.engine),
+                );
+                for field in &table.fields {
+                    let _ = writeln!(
+                        out,
+                        "<tr><td>{}</td><td><code>{}{}</code></td></tr>",
+                        field.name,
+                        ty_arch(&field.ty),
+                        if field.pk { " pk" } else { "" },
+                    );
+                }
+                out.push_str("</table>\n");
+            }
+        }
+        out.push_str("</section>\n");
+    }
+    out
+}
+
+fn event_sections(spec: &SystemSpec) -> String {
+    let mut out = String::new();
+    for service in &spec.services {
+        for event in &service.emits {
+            let consumers = dash_join(
+                spec.services
+                    .iter()
+                    .filter(|s| s.consumes.iter().any(|(n, _)| n == &event.name))
+                    .map(|s| s.name.as_str())
+                    .collect(),
+            );
+            let _ = writeln!(
+                out,
+                "<section id=\"ev-{name}\">\n<h3>{name} <span class=\"meta\">emitted by {emitter} · consumed by {consumers}</span></h3>\n<table>\n<tr><th>field</th><th>type</th></tr>",
+                name = event.name,
+                emitter = service.name,
+            );
+            for field in &event.fields {
+                let _ = writeln!(
+                    out,
+                    "<tr><td>{}</td><td><code>{}</code></td></tr>",
+                    field.name,
+                    ty_arch(&field.ty),
+                );
+            }
+            let _ = writeln!(
+                out,
+                "</table>\n<p>sample: <code>{}</code></p>\n</section>",
+                crate::sample_json(event),
+            );
+        }
+    }
+    out
+}

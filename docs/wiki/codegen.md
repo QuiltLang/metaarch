@@ -1,7 +1,7 @@
 # Code generation
 
 `metaarch-codegen` turns a validated `SystemSpec` into a runnable system.
-Phase 1 of the [plan](plan.md) implemented the MVP described here.
+Phases 1 and 2 of the [plan](plan.md) implemented what is described here.
 
 ## How the generators work
 
@@ -26,18 +26,29 @@ Each artifact kind is one generator function `fn(&SystemSpec) -> Artifact`
 (path + contents). Adding an artifact kind — a Grafana dashboard, a k6 load
 test — is one more function over the same spec, one more loop in `generate`.
 
-Two phase-1 lessons about where quotes stop and builders start:
+Lessons (phases 1–2) about where quotes stop and builders start:
 
 - **Identifier positions take no holes in the Rust grammar** (types and
   patterns do), so items whose *names* come from the spec — the serde event
-  structs — are built with the `tb`/`leaf` term builders instead of quotes.
+  structs, the client structs/methods — are built with the `tb`/`leaf` term
+  builders instead of quotes.
 - **Python quotes expand variadic blocks as fluent chains** with no named
   builder, so ground emit loops (`←`) cannot run inside them. Dynamic
   statement lists are built at ground (`py_block`) and spliced through a
   single hole; Rust and bash quotes take emit loops directly.
+- **A lone item quote in statement/tail position expands as an emit
+  statement** (`….emit(&mut b_)`), not a value — bind it to a local first
+  and return the local (multi-item quotes wrap themselves in a
+  `source_file` builder and are fine).
+- **HTML splices are `raw_text` leaves** (the `html_report` pattern): the
+  page skeleton is one html quote; spec-driven rows/sections are plain HTML
+  strings built at ground and injected with a `raw()` helper.
 
 SQL and the config files (TOML, `.envrc`, README) are plain text built in
-ordinary Rust — quilt has no grammar for them yet.
+ordinary Rust — quilt has no grammar for them yet. The migrations and seed
+generators are plain text too, sharing the DDL spelling (`column_def`,
+`create_table`) with the schema generator so an `ALTER` adds a column
+spelled exactly as a fresh `CREATE` would.
 
 ## Generated-system layout
 
@@ -51,28 +62,38 @@ out/shop/
 ├── .gitignore
 ├── README.md               # GENERATED topology + ports + curl instructions
 ├── Cargo.toml              # workspace over the rust service crates
+├── system.arch             # byte-identical copy of the source .arch:
+│                           #   provenance + the migration diff base
 ├── nix/
-│   └── flake.nix           # dev env: rust + python toolchains (plain text
-│                           #   until the phase 3 .nix.quilt generator)
+│   └── flake.nix           # dev env: rust + python toolchains + curl (plain
+│                           #   text until the phase 3 .nix.quilt generator)
 ├── bin/
 │   ├── main                # GENERATED bash: builds, boots the whole fleet,
 │   │                       #   kills it together (db provisioning: phase 3)
-│   └── smoke               # GENERATED end-to-end smoke test (phase 2)
+│   └── smoke               # GENERATED end-to-end test: boots the fleet,
+│                           #   curls every derived route, reports pass/fail
 ├── gateway/                # lang rust  → axum service crate
 │   ├── Cargo.toml
-│   └── src/main.rs
+│   └── src/
+│       ├── main.rs         #   health + /peers routes
+│       ├── events.rs       #   serde structs (system-wide: clients use them)
+│       └── clients.rs      #   typed clients for the peer services
 ├── orders/                 # lang rust + db postgres
 │   ├── Cargo.toml
-│   ├── src/main.rs         #   axum skeleton, health + event routes
-│   ├── src/events.rs       #   serde structs for emits/consumes
+│   ├── src/main.rs         #   axum skeleton, health + peers + event routes
+│   ├── src/events.rs       #   serde structs for the system's events
 │   ├── src/bus.rs          #   HTTP fan-out shim (emitters only)
-│   └── sql/schema.sql      #   DDL derived from the `db` block
+│   ├── src/clients.rs      #   typed clients for the peer services
+│   └── sql/
+│       ├── schema.sql      #   DDL derived from the `db` block
+│       ├── seed.sql        #   three deterministic rows per table
+│       └── migrations/     #   numbered ALTER steps, appended per generate
 ├── notifier/               # lang python → stdlib-only package
 │   ├── notifier/__init__.py    # HTTP server, typed routes, serve()
 │   ├── notifier/__main__.py    # python3 -m notifier
 │   └── notifier/events.py      # dataclasses mirroring orders/src/events.rs
 └── docs/
-    └── index.html          # GENERATED topology + API/event reference (phase 2)
+    └── index.html          # GENERATED topology + API/event reference
 ```
 
 The layout rule: **one service, one directory, named by the service**;
@@ -86,14 +107,14 @@ from the same spec, not a copied template.
 
 | `.arch` construct | generates |
 |---|---|
-| `service` + `lang rust` | axum crate: routes, state, health endpoint |
+| `service` + `lang rust` | axum crate: routes, health + peers endpoints, typed peer clients |
 | `service` + `lang python` | python package: consumer loop, typed handlers |
 | `port` | bind config, `bin/main` orchestration entry, smoke-test URL |
-| `db` block | `sql/schema.sql` (per engine), migrations (phase 2), db provisioning in `nix/` (phase 3) |
-| `table` | DDL + Rust structs + query helpers for the owning service |
-| `emits E { ... }` | Rust struct / Python dataclass for `E`, emit helper, docs entry |
-| `consumes E` | subscription wiring + typed handler stub |
-| whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, README |
+| `db` block | `sql/schema.sql` + `sql/seed.sql` (per engine), `sql/migrations/` diffs, db provisioning in `nix/` (phase 3) |
+| `table` | DDL + seed rows + migration steps; Rust structs + query helpers (phase 4) |
+| `emits E { ... }` | Rust struct / Python dataclass for `E`, client `emit_e` method, emit route, smoke check, docs entry |
+| `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |
+| whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, README, `system.arch` snapshot |
 
 ## Event transport (MVP)
 
@@ -107,6 +128,9 @@ without touching any system description.
 Concretely, every service (either language) serves the same route shape:
 
 - `GET /health` — liveness.
+- `GET /peers` — Rust services in a multi-service system: the health of
+  every peer, checked through the generated typed clients (`clients.rs`) —
+  the route exists so the clients are exercised by generated code.
 - `POST /emit/<E>` — on the emitter of `E`: parse the JSON into the typed
   event, then fan out to each consumer's `/events/<E>`. This is the manual
   trigger for every event path until phase 4 gives services real handlers.
@@ -125,3 +149,10 @@ output. No timestamps, no ordering dependent on hash maps. This keeps
 generated systems diffable — the phase 2 demo ("one field added, watch the
 diff") depends on it — and makes `generate` idempotent and CI-checkable,
 like quilt's own `check-bootstrap`.
+
+Migrations need history without breaking that: `migrations` is a separate
+pure function of (previous spec, next spec, existing migration counts). The
+CLI supplies the inputs from the output directory — the `system.arch`
+snapshot the last run wrote, and a scan of each `sql/migrations/` for the
+next number. An unchanged spec adds no files, so regenerating stays
+idempotent.

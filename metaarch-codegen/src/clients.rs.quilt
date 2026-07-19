@@ -1,0 +1,142 @@
+//! Generator for `src/clients.rs`: typed clients for every peer service's
+//! HTTP API. Each peer gets a unit struct (`OrdersClient`) with `health()`
+//! plus one method per event route, payloads typed by the shared `events`
+//! module — so a Rust service calls the fleet through types, not raw HTTP.
+//! The generated `/peers` route in `main.rs` is their first caller.
+//!
+//! This is the `.rs.quilt` source for the generated `clients.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+//!
+//! Struct and method names come from the spec, so the per-peer impls are
+//! written with the term builders (identifier positions accept no holes in
+//! the Rust grammar); the fixed HTTP helper is an ordinary quote.
+
+#![allow(clippy::unit_arg)]
+
+use metaarch_spec::{Service, SystemSpec};
+use quilt::prelude::*;
+
+use crate::{camel, header, snake};
+
+pub(crate) fn clients_rs(spec: &SystemSpec, index: usize) -> String {
+    let mut items: Vec<⟨T⟩> = vec![request_helper()];
+    for (peer_index, peer) in spec.services.iter().enumerate() {
+        if peer_index == index {
+            continue;
+        }
+        items.push(client_struct(peer, peer_index));
+        items.push(client_impl(peer, peer_index));
+    }
+    format!(
+        "{}\n//! Typed clients for the peer services' HTTP APIs.\n\n// The full API surface is generated; not every service calls every method.\n#![allow(dead_code)]\n\n{}",
+        header(&spec.name, "//!"),
+        crate::rust_service::source_file(items).coparse()
+    )
+}
+
+/// The transport under every client method: a hand-rolled HTTP/1.1 exchange
+/// over `TcpStream` (like `bus.rs`, but returning the response body), so the
+/// generated services still need no HTTP client dependency.
+fn request_helper() -> ⟨T⟩ {
+    rust↖
+        async fn request(method: &'static str, addr: &'static str, path: &'static str, body: String) -> Option<String> {
+            tokio::task::spawn_blocking(move || request_blocking(method, addr, path, &body))
+                .await
+                .ok()
+                .flatten()
+        }
+
+        fn request_blocking(method: &str, addr: &str, path: &str, body: &str) -> Option<String> {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(addr).ok()?;
+            let message = format!(
+                "{method} {path} HTTP/1.1\r\nHost: {addr}\r\nContent-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n{body}",
+                len = body.len()
+            );
+            stream.write_all(message.as_bytes()).ok()?;
+            let mut response = String::new();
+            let _ = stream.read_to_string(&mut response);
+            let (head, payload) = response.split_once("\r\n\r\n")?;
+            // Status, not version: python's stdlib server answers HTTP/1.0.
+            let status = head.split_whitespace().nth(1)?;
+            if status.starts_with('2') {
+                Some(payload.to_string())
+            } else {
+                None
+            }
+        }
+    ↗
+}
+
+fn client_struct(peer: &Service, peer_index: usize) -> ⟨T⟩ {
+    tb("struct_item")
+        .w(&format!(
+            "/// Typed client for the `{}` service at {}.",
+            peer.name,
+            crate::service_addr(peer, peer_index)
+        ))
+        .n()
+        .w(&format!("pub struct {}Client;", camel(&peer.name)))
+        .b()
+}
+
+fn client_impl(peer: &Service, peer_index: usize) -> ⟨T⟩ {
+    let addr = crate::service_addr(peer, peer_index);
+    let mut b = tb("impl_item")
+        .w(&format!("impl {}Client {{", camel(&peer.name)))
+        .n()
+        .w(&format!(
+            "    pub const ADDR: &'static str = \"{addr}\";"
+        ))
+        .n()
+        .n()
+        .w("    /// `GET /health` — true when the service answers.")
+        .n()
+        .w("    pub async fn health() -> bool {")
+        .n()
+        .w("        request(\"GET\", Self::ADDR, \"/health\", String::new()).await.is_some()")
+        .n()
+        .w("    }");
+    for event in &peer.emits {
+        b = event_method(
+            b,
+            &format!("emit_{}", snake(&event.name)),
+            &crate::emit_path(&event.name),
+            &event.name,
+            "trigger the event on its emitter (fans out to consumers)",
+        );
+    }
+    for (name, _) in &peer.consumes {
+        b = event_method(
+            b,
+            &format!("deliver_{}", snake(name)),
+            &crate::event_path(name),
+            name,
+            "deliver the event straight to this consumer",
+        );
+    }
+    b.n().w("}").b()
+}
+
+/// One `POST` method taking the typed event and returning the response body.
+fn event_method(
+    b: quilt::qterm::QTermBuilder,
+    method: &str,
+    path: &str,
+    event: &str,
+    doc: &str,
+) -> quilt::qterm::QTermBuilder {
+    b.n()
+        .n()
+        .w(&format!("    /// `POST {path}` — {doc}."))
+        .n()
+        .w(&format!(
+            "    pub async fn {method}(event: &crate::events::{event}) -> Option<String> {{"
+        ))
+        .n()
+        .w(&format!(
+            "        request(\"POST\", Self::ADDR, \"{path}\", serde_json::to_string(event).unwrap()).await"
+        ))
+        .n()
+        .w("    }")
+}

@@ -14,7 +14,7 @@ use crate::{Artifact, header};
 
 pub(crate) fn artifacts(spec: &SystemSpec, index: usize) -> Vec<Artifact> {
     let service = &spec.services[index];
-    let events = crate::service_events(spec, service);
+    let events = rust_events(spec, index);
     let mut out = vec![
         Artifact::file(
             format!("{}/Cargo.toml", service.name),
@@ -37,7 +37,32 @@ pub(crate) fn artifacts(spec: &SystemSpec, index: usize) -> Vec<Artifact> {
             bus_rs(spec),
         ));
     }
+    if spec.services.len() > 1 {
+        out.push(Artifact::file(
+            format!("{}/src/clients.rs", service.name),
+            crate::clients::clients_rs(spec, index),
+        ));
+    }
     out
+}
+
+/// The event types a Rust service's crate must know: everything it emits or
+/// consumes, plus (when it has peers, and with them typed clients) every
+/// event those clients can carry. Every consumed event is emitted somewhere
+/// (validated), so covering all `emits` covers the whole system.
+fn rust_events<'a>(spec: &'a SystemSpec, index: usize) -> Vec<&'a EventType> {
+    let service = &spec.services[index];
+    let mut events = crate::service_events(spec, service);
+    if spec.services.len() > 1 {
+        for peer in &spec.services {
+            for event in &peer.emits {
+                if !events.iter().any(|e| e.name == event.name) {
+                    events.push(event);
+                }
+            }
+        }
+    }
+    events
 }
 
 /// The service's crate manifest. Serde only appears when the service touches
@@ -65,7 +90,11 @@ fn main_rs(spec: &SystemSpec, index: usize) -> String {
         service.name, addr
     );
 
+    let has_clients = spec.services.len() > 1;
     let mut router = rust↖axum::Router::new().route("/health", axum::routing::get(health))↗;
+    if has_clients {
+        router = rust↖↙router↘.route("/peers", axum::routing::get(peers))↗;
+    }
     for event in &service.emits {
         let path = crate::emit_path(&event.name);
         let handler = emit_handler(spec, event);
@@ -78,11 +107,14 @@ fn main_rs(spec: &SystemSpec, index: usize) -> String {
     }
 
     let mut items: Vec<⟨T⟩> = Vec::new();
-    if !crate::service_events(spec, service).is_empty() {
+    if !rust_events(spec, index).is_empty() {
         items.push(rust↖mod events;↗);
     }
     if !service.emits.is_empty() {
         items.push(rust↖mod bus;↗);
+    }
+    if has_clients {
+        items.push(rust↖mod clients;↗);
     }
     items.push(rust↖
         #[tokio::main]
@@ -100,8 +132,47 @@ fn main_rs(spec: &SystemSpec, index: usize) -> String {
             "ok"
         }
     ↗);
+    if has_clients {
+        items.push(peers_fn(spec, index));
+    }
 
     format!("{}\n\n{}", header(&spec.name, "//!"), source_file(items).coparse())
+}
+
+/// Handler for `GET /peers`: report the health of every peer service through
+/// its typed client — the first (generated) caller of `clients.rs`.
+fn peers_fn(spec: &SystemSpec, index: usize) -> ⟨T⟩ {
+    let mut checks: Vec<⟨T⟩> = Vec::new();
+    for (peer_index, peer) in spec.services.iter().enumerate() {
+        if peer_index == index {
+            continue;
+        }
+        let health = leaf(
+            "identifier",
+            &format!("clients::{}Client::health", crate::camel(&peer.name)),
+        );
+        let ok = format!("{} ok", peer.name);
+        let down = format!("{} down", peer.name);
+        checks.push(rust↖out.push_str(if ↙health↘().await { ↙ok.↑↘ } else { ↙down.↑↘ });↗);
+        checks.push(rust↖out.push('\n');↗);
+    }
+    // Bound to a local first: a lone item quote in tail position expands as
+    // an emit statement (the python generators bind for the same reason).
+    let item = rust↖
+        async fn peers() -> String {
+            let mut out = String::new();
+            ↙{
+                for (i, check) in checks.into_iter().enumerate() {
+                    if i > 0 {
+                        NL.←;
+                    }
+                    check.←;
+                }
+            }↘
+            out
+        }
+    ↗;
+    item
 }
 
 /// Handler for `POST /emit/<Event>`: parse the typed event, then fan its
@@ -148,10 +219,11 @@ fn event_ty(event: &EventType) -> ⟨T⟩ {
     leaf("type_identifier", &format!("events::{}", event.name))
 }
 
-/// `src/events.rs`: one serde struct per event this service emits or
-/// consumes. Struct and field names come from the spec, so the items are
-/// built with the term builders rather than quotes (identifier positions
-/// accept no holes in the Rust grammar).
+/// `src/events.rs`: one serde struct per event this service emits, consumes,
+/// or can reach through its typed clients (see [`rust_events`]). Struct and
+/// field names come from the spec, so the items are built with the term
+/// builders rather than quotes (identifier positions accept no holes in the
+/// Rust grammar).
 fn events_rs(spec: &SystemSpec, events: &[&EventType]) -> String {
     let mut b_ = tb("source_file");
     for (i, event) in events.iter().enumerate() {
@@ -215,8 +287,9 @@ fn bus_rs(spec: &SystemSpec) -> String {
     )
 }
 
-/// Assemble items into one file term, blank lines between items.
-fn source_file(items: Vec<⟨T⟩>) -> ⟨T⟩ {
+/// Assemble items into one file term, blank lines between items. Shared with
+/// the clients generator.
+pub(crate) fn source_file(items: Vec<⟨T⟩>) -> ⟨T⟩ {
     let mut b_ = tb("source_file");
     for (i, item) in items.into_iter().enumerate() {
         if i > 0 {

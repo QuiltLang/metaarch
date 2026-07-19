@@ -55,7 +55,16 @@ curl -X POST http://127.0.0.1:8081/emit/OrderPlaced \
      -H 'Content-Type: application/json' \
      -d '{"order_id": "42", "total": 4999}'
 # → the python notifier prints the typed event
+curl http://127.0.0.1:8080/health    # gateway liveness
+curl http://127.0.0.1:8080/peers     # fleet health, via the typed rust clients
+bin/smoke                            # end-to-end: every route, every event path
+open docs/index.html                 # generated API + event reference
 ```
+
+Change a field in `examples/shop.arch` and regenerate: the diff touches the
+Rust events, the Python dataclass, SQL schema + seed data, the docs, the
+smoke test — and `sql/migrations/` gains the numbered `ALTER` step (diffed
+against the `system.arch` snapshot of the previous run).
 
 ## Layout
 

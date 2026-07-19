@@ -11,12 +11,19 @@
 
 use metaarch_spec::{Engine, EventType, Lang, Service, SystemSpec, Ty};
 
+mod migrations;
+mod seed;
 mod sql;
 
 // Expanded from the `.rs.quilt` siblings by `bin/expand`; gitignored.
+mod clients;
+mod docs;
 mod python_service;
 mod rust_service;
+mod smoke;
 mod system;
+
+pub use migrations::migrations;
 
 /// One generated file, relative to the generated system's root.
 pub struct Artifact {
@@ -45,6 +52,17 @@ impl Artifact {
         artifact.executable = true;
         artifact
     }
+
+    /// The byte-identical copy of the source `.arch` file that `generate`
+    /// leaves in the output root: provenance for readers, and the diff base
+    /// the next run's migrations are computed against.
+    pub fn snapshot(source: String) -> Self {
+        Artifact {
+            path: "system.arch".into(),
+            contents: source,
+            executable: false,
+        }
+    }
 }
 
 /// Generate every artifact for a validated spec. Call only after
@@ -53,6 +71,8 @@ impl Artifact {
 /// is emitted somewhere, tables have exactly one pk).
 pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
     let mut artifacts = system::artifacts(spec);
+    artifacts.push(Artifact::script("bin/smoke", smoke::bin_smoke(spec)));
+    artifacts.push(Artifact::file("docs/index.html", docs::index_html(spec)));
     for (index, service) in spec.services.iter().enumerate() {
         match service.lang.expect("validated: service has a lang") {
             Lang::Rust => artifacts.extend(rust_service::artifacts(spec, index)),
@@ -60,6 +80,7 @@ pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
         }
         if let Some(db) = &service.db {
             artifacts.push(sql::schema(spec, service, db));
+            artifacts.push(seed::seed(spec, service, db));
         }
     }
     artifacts
@@ -121,6 +142,77 @@ pub(crate) fn event_path(event: &str) -> String {
 /// The HTTP path an emitter exposes to trigger an event by hand.
 pub(crate) fn emit_path(event: &str) -> String {
     format!("/emit/{event}")
+}
+
+/// CamelCase spelling of a snake_case name (`order_svc` → `OrderSvc`), for
+/// spec-named Rust types like the generated client structs.
+pub(crate) fn camel(name: &str) -> String {
+    name.split('_')
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_ascii_uppercase().to_string() + chars.as_str(),
+                None => String::new(),
+            }
+        })
+        .collect()
+}
+
+/// snake_case spelling of a CamelCase name (`OrderPlaced` → `order_placed`),
+/// for spec-named Rust methods like the client emit helpers.
+pub(crate) fn snake(name: &str) -> String {
+    let mut out = String::with_capacity(name.len() + 4);
+    for (i, c) in name.chars().enumerate() {
+        if c.is_ascii_uppercase() {
+            if i > 0 {
+                out.push('_');
+            }
+            out.push(c.to_ascii_lowercase());
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// A deterministic sample JSON payload for an event — the same values row 1
+/// of the seed data uses — so the smoke test and the docs exercise every
+/// event with one canonical example.
+pub(crate) fn sample_json(event: &EventType) -> String {
+    let fields = event
+        .fields
+        .iter()
+        .map(|f| format!("\"{}\": {}", f.name, sample_json_value(f)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{{{fields}}}")
+}
+
+fn sample_json_value(field: &metaarch_spec::Field) -> String {
+    match &field.ty {
+        Ty::Uuid => format!("\"00000000-0000-0000-0000-{:012}\"", 1),
+        Ty::Int => "1".into(),
+        Ty::Money => "100".into(),
+        Ty::Text => format!("\"{}_1\"", field.name),
+        Ty::Bool => "true".into(),
+        Ty::Timestamp => "\"2026-01-01T00:00:00Z\"".into(),
+        Ty::Enum(variants) => format!("\"{}\"", variants[0]),
+    }
+}
+
+/// Human spelling of a field type, as written in `.arch` source — used by
+/// docs and migration comments.
+pub(crate) fn ty_arch(ty: &Ty) -> String {
+    match ty {
+        Ty::Uuid => "uuid".into(),
+        Ty::Int => "int".into(),
+        Ty::Money => "money".into(),
+        Ty::Text => "text".into(),
+        Ty::Bool => "bool".into(),
+        Ty::Timestamp => "timestamp".into(),
+        Ty::Enum(variants) => format!("enum({})", variants.join(", ")),
+    }
 }
 
 // ---------------------------------------------------------------------------
