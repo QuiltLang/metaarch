@@ -1,7 +1,7 @@
 # Code generation
 
 `metaarch-codegen` turns a validated `SystemSpec` into a runnable system.
-Phases 1 and 2 of the [plan](plan.md) implemented what is described here.
+Phases 1–3 of the [plan](plan.md) implemented what is described here.
 
 ## How the generators work
 
@@ -43,6 +43,13 @@ Lessons (phases 1–2) about where quotes stop and builders start:
 - **HTML splices are `raw_text` leaves** (the `html_report` pattern): the
   page skeleton is one html quote; spec-driven rows/sections are plain HTML
   strings built at ground and injected with a `raw()` helper.
+- **Generated Nix sticks to three splice positions** (phase 3): expression
+  values, lifted strings, and variadic list interiors. Anything keyed by a
+  spec name goes through `builtins.listToAttrs` (attrset keys are plain
+  strings there) and the NixOS modules bind their varying names in a `let`
+  and select with `${name}` dynamics — so no identifier or attrset-key
+  position is ever spliced. Multi-line shell text inside Nix is built as a
+  ground Rust string and lifted whole (`\n` escapes in the emitted literal).
 
 SQL and the config files (TOML, `.envrc`, README) are plain text built in
 ordinary Rust — quilt has no grammar for them yet. The migrations and seed
@@ -62,14 +69,22 @@ out/shop/
 ├── .gitignore
 ├── README.md               # GENERATED topology + ports + curl instructions
 ├── Cargo.toml              # workspace over the rust service crates
+├── Cargo.lock              # GENERATED from the vendored canonical lock:
+│                           #   pinned deps, valid for every generated system
+├── flake.nix               # GENERATED Nix (root): per-service package
+│                           #   builds, nix run apps, fleet app, NixOS modules
 ├── system.arch             # byte-identical copy of the source .arch:
 │                           #   provenance + the migration diff base
 ├── nix/
-│   └── flake.nix           # dev env: rust + python toolchains + curl (plain
-│                           #   text until the phase 3 .nix.quilt generator)
+│   ├── flake.nix           # GENERATED Nix: dev shell — toolchains, db
+│   │                       #   engines, curl (what the .envrc loads)
+│   └── modules/            # GENERATED NixOS module per service:
+│                           #   services.<system>.<svc>.enable → systemd unit
 ├── bin/
-│   ├── main                # GENERATED bash: builds, boots the whole fleet,
-│   │                       #   kills it together (db provisioning: phase 3)
+│   ├── main                # GENERATED bash: provisions dbs, builds, boots
+│   │                       #   the whole fleet, kills it together
+│   ├── db                  # GENERATED bash: postgres initdb/start (unix
+│   │                       #   socket under .pgdata/) + schema/seed apply
 │   └── smoke               # GENERATED end-to-end test: boots the fleet,
 │                           #   curls every derived route, reports pass/fail
 ├── gateway/                # lang rust  → axum service crate
@@ -98,10 +113,13 @@ out/shop/
 
 The layout rule: **one service, one directory, named by the service**;
 system-level concerns (env, boot, tests, docs) sit at the root exactly where
-metaarch itself keeps them. `nix/flake.nix` is emitted by the phase 3
-`.nix.quilt` generator — quilt's string-based Nix host maps host unquotes
-onto Nix's own `${...}` antiquotation, so the flake is generated Nix built
-from the same spec, not a copied template.
+metaarch itself keeps them. Both flakes and the NixOS modules are emitted by
+the `nix.rs.quilt` generator as quilt `nix↖…↗` target quotes — generated Nix
+ASTs built from the same spec, not a copied template. The *root* flake is
+the one deviation from the mirror-this-repo shape: `nix build` can only see
+sources inside the flake's own directory, so the buildable packages live at
+the root while the dev shell stays at `nix/flake.nix` (initialize git in a
+generated system before `nix build` so the source copy filters `target/`).
 
 ## Artifact map (target state)
 

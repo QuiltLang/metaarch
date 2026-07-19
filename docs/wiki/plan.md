@@ -72,22 +72,40 @@ Python dataclass, SQL schema + seed, docs, `bin/smoke`, and emits
 `ALTER TABLE orders ADD COLUMN` in `sql/migrations/0001.sql`. Reverting
 emits `0002.sql` with the `DROP COLUMN`. `bin/smoke`: 7/7 routes pass.
 
-## Phase 3 — Nix deployment (not started — next up)
+## Phase 3 — Nix deployment ✅
 
-Lean into quilt's string-based Nix host: the deployment is *generated Nix*,
-not hand-written. (Phase 1 ships a stopgap: generated systems already get a
-plain-text `nix/flake.nix` dev shell, which this phase replaces.)
+The deployment is *generated Nix*, not hand-written: quilt `nix↖…↗` target
+quotes in the established `.rs.quilt` pattern (see the decisions log for why
+not a `.nix.quilt` host file). This replaced phase 1's stopgap plain-text
+dev shell.
 
-- [ ] `.nix.quilt` generator emitting the generated system's `nix/flake.nix`:
-      a dev shell with each service's toolchain, plus `nix run` apps per
-      service and a process-compose/`bin/main` orchestrator for the fleet
-- [ ] Per-service NixOS modules / containers as a `nix build` target
-- [ ] Database provisioning (postgres init + schema apply) in the generated env
+- [x] `nix.rs.quilt` generator emitting generated Nix from the spec:
+  - [x] **Root `flake.nix`** — one buildable package per service
+        (`nix build .#orders`: rust via `buildRustPackage` + the emitted
+        `Cargo.lock`, python via `writeShellApplication`), `nix run` apps
+        per service, and a `fleet` app (default) that boots every *built*
+        service with the same die-together semantics as `bin/main`
+  - [x] **`nix/flake.nix` dev shell** — toolchains + db engines + curl;
+        what the unchanged `.envrc` loads
+  - [x] **Per-service NixOS modules** (`nix/modules/<svc>.nix`, exported as
+        `nixosModules.<svc>`): `services.<system>.<svc>.enable` runs the
+        flake-built package as a hardened systemd unit (containers via
+        `dockerTools` stay a stretch item)
+- [x] Emitted **`Cargo.lock`** from a vendored canonical lock — the closed
+      dependency set means one lock is valid for every generated workspace;
+      `cargo build --locked` passes and nix builds are pure
+- [x] **Database provisioning**: generated `bin/db` — postgres `initdb` +
+      unix-socket-only server under `.pgdata/<svc>`, schema + seed applied
+      on first creation, idempotent `up` / `down`; sqlite files likewise.
+      `bin/main` runs `bin/db up` before booting the fleet
 
-**Demo:** `cd out/shop && direnv allow && bin/main` — a reproducible boot of
-the whole fleet on a clean machine.
+**Demo (works):** `cd out/shop && direnv allow && bin/main` boots the fleet
+with a provisioned, seeded postgres; `nix build .#orders` compiles the
+service hermetically from the emitted lock and the binary serves `/health`;
+`nix flake show` lists apps, packages, dev shell, and three NixOS modules.
+`bin/smoke`: 7/7 routes pass.
 
-## Phase 4 — quilt integration (the endgame; not started)
+## Phase 4 — quilt integration (the endgame; not started — next up)
 
 Fold the DSL into quilt itself so `.arch` files can carry inline fragments of
 other languages for fine-grained control of the generated code:
@@ -113,6 +131,8 @@ between arrow brackets, type-checked in place by the LSP.
   from the same `.arch` source
 - Architecture visualizer: generated HTML/SVG topology diagram
 - `metaarch fmt` for `.arch` files
+- Container images per service (`dockerTools.buildLayeredImage` in the root
+  flake) — the NixOS modules cover deployment for now
 
 ## Decisions log
 
@@ -157,3 +177,36 @@ between arrow brackets, type-checked in place by the LSP.
   own emits/consumes — the client API is typed by the system-wide contract.
   `GET /peers` exists so the clients are exercised (and compile-checked) by
   generated code, not just offered.
+- **Rust-host nix generator, not a `.nix.quilt` host file** (2026-07-19):
+  generators take a `SystemSpec` at runtime, but a `.nix.quilt` file expands
+  once at build time — it can't consume a spec. So phase 3 is `nix.rs.quilt`
+  with `nix↖…↗` *target* quotes, matching every other generator; quilt's
+  string-based Nix host stays on the table for phase 4.
+- **Two flakes per generated system** (2026-07-19): `nix build` only sees
+  sources inside the flake directory, so the buildable packages, apps, and
+  NixOS modules live in a *root* `flake.nix`; the dev shell stays at
+  `nix/flake.nix` (the mirror-this-repo shape, unchanged `.envrc`, and
+  day-to-day direnv reloads never copy the source tree).
+- **Generated Nix uses three splice positions** (2026-07-19): expression
+  values, lifted strings, variadic list interiors — the ones quilt's nix
+  target has covered by tests. Spec-named attrsets go through
+  `builtins.listToAttrs`; NixOS modules bind names in a `let` and select
+  with `${name}`; multi-line shell text is lifted whole from a ground
+  string. No identifier or attrset-key position is ever spliced.
+- **Vendored canonical `Cargo.lock`** (2026-07-19): every generated Rust
+  service now has the identical dependency set (serde made unconditional),
+  so one lock — captured once, registry entries vendored under `assets/`,
+  member entries merged per spec — is emitted into every system. Dev builds
+  pass `--locked`, and it is what makes `nix build` of a service pure.
+- **quilt pinned to a rev, not a tag** (2026-07-19): the Nix lift marker
+  landed after `v0.5.0`, so the pin moved to `ba27c41` (the sibling
+  checkout `bin/expand` uses, keeping expander and runtime matched). Return
+  to a tag at the next quilt release.
+- **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
+  `bin/db up` applies schema + seed only when it creates the database;
+  migrations under `sql/migrations/` target *pre-existing* databases and
+  applying them needs bookkeeping (a schema-version table) the generated
+  systems don't have yet. Postgres runs unix-socket-only under
+  `.pgdata/<svc>` — nothing to collide with, nothing listening on TCP —
+  and outlives the fleet (`bin/main` starts it via `bin/db up`; `bin/db
+  down` stops it).

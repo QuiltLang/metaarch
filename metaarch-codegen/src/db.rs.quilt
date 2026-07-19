@@ -1,0 +1,131 @@
+//! Generator for `bin/db`: database provisioning for the generated system.
+//! `bin/db up` is idempotent — for each postgres service it initdb's a
+//! cluster under `.pgdata/<service>` (unix socket only, no TCP port to
+//! collide on), starts it, and on first creation applies the generated
+//! schema and seed; sqlite services get their `<service>.db` file created
+//! and seeded the same way. `bin/db down` stops the postgres servers.
+//!
+//! Only emitted when the spec declares at least one `db` block; `bin/main`
+//! runs `bin/db up` before booting the fleet so a fresh checkout boots with
+//! provisioned databases. Outside the generated dev shell (no db tools on
+//! PATH) provisioning warns and skips instead of failing the boot.
+//! Migrations under `sql/migrations/` are for *pre-existing* databases and
+//! stay a manual, operator-driven step.
+//!
+//! This is the `.rs.quilt` source for the generated `db.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+
+#![allow(clippy::unit_arg)]
+
+use metaarch_spec::{Engine, SystemSpec};
+use quilt::prelude::*;
+
+use crate::header;
+
+/// The `bin/db` script, or `None` when no service declares a database.
+pub(crate) fn bin_db(spec: &SystemSpec) -> Option<String> {
+    let dbs: Vec<(&str, Engine)> = spec
+        .services
+        .iter()
+        .filter_map(|s| s.db.as_ref().map(|db| (s.name.as_str(), db.engine)))
+        .collect();
+    if dbs.is_empty() {
+        return None;
+    }
+
+    let mut ups: Vec<⟨T⟩> = Vec::new();
+    let mut downs: Vec<⟨T⟩> = Vec::new();
+    for (name, engine) in &dbs {
+        let name = name.to_string();
+        match engine {
+            Engine::Postgres => {
+                let n = name.clone();
+                ups.push(bash↖pg_up ↙n.↑↘↗);
+                downs.push(bash↖pg_down ↙name.↑↘↗);
+            }
+            Engine::Sqlite => ups.push(bash↖sqlite_up ↙name.↑↘↗),
+        }
+    }
+
+    let script = bash↖
+        set -euo pipefail
+        cd "$(dirname "$0")/.."
+
+        CMD="${1:-up}"
+
+        pg_up() {
+            if ! command -v initdb > /dev/null 2>&1; then
+                echo "warn: postgres tools not on PATH — skipping db for $1 (enter the dev shell: direnv allow)" >&2
+                return 0
+            fi
+            DATA=".pgdata/$1"
+            SOCK="$PWD/$DATA"
+            FRESH=0
+            if [ ! -d "$DATA" ]; then
+                initdb -D "$DATA" --auth=trust > /dev/null
+                FRESH=1
+            fi
+            if ! pg_ctl -D "$DATA" status > /dev/null 2>&1; then
+                pg_ctl -D "$DATA" -o "-c listen_addresses='' -k $SOCK" -l "$DATA/server.log" start > /dev/null
+            fi
+            if [ "$FRESH" -eq 1 ]; then
+                createdb -h "$SOCK" "$1"
+                psql -q -h "$SOCK" -d "$1" -f "$1/sql/schema.sql"
+                psql -q -h "$SOCK" -d "$1" -f "$1/sql/seed.sql"
+                echo "db: $1 provisioned (postgres, socket $SOCK)"
+            else
+                echo "db: $1 up (postgres, socket $SOCK)"
+            fi
+        }
+
+        pg_down() {
+            DATA=".pgdata/$1"
+            if pg_ctl -D "$DATA" status > /dev/null 2>&1; then
+                pg_ctl -D "$DATA" stop > /dev/null
+                echo "db: $1 stopped"
+            fi
+        }
+
+        sqlite_up() {
+            if ! command -v sqlite3 > /dev/null 2>&1; then
+                echo "warn: sqlite3 not on PATH — skipping db for $1 (enter the dev shell: direnv allow)" >&2
+                return 0
+            fi
+            if [ ! -f "$1/$1.db" ]; then
+                sqlite3 "$1/$1.db" < "$1/sql/schema.sql"
+                sqlite3 "$1/$1.db" < "$1/sql/seed.sql"
+                echo "db: $1 provisioned (sqlite, $1/$1.db)"
+            else
+                echo "db: $1 up (sqlite, $1/$1.db)"
+            fi
+        }
+
+        case "$CMD" in
+            up)
+                ↙{
+                    for up in ups {
+                        up.←;
+                        NL.←;
+                    }
+                }↘
+                ;;
+            down)
+                ↙{
+                    for down in downs {
+                        down.←;
+                        NL.←;
+                    }
+                }↘
+                ;;
+            *)
+                echo "usage: bin/db [up|down]" >&2
+                exit 1
+                ;;
+        esac
+    ↗;
+    Some(format!(
+        "#!/usr/bin/env bash\n{}\n{}",
+        header(&spec.name, "#"),
+        script.coparse()
+    ))
+}

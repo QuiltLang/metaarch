@@ -11,13 +11,16 @@
 
 use metaarch_spec::{Engine, EventType, Lang, Service, SystemSpec, Ty};
 
+mod cargo_lock;
 mod migrations;
 mod seed;
 mod sql;
 
 // Expanded from the `.rs.quilt` siblings by `bin/expand`; gitignored.
 mod clients;
+mod db;
 mod docs;
+mod nix;
 mod python_service;
 mod rust_service;
 mod smoke;
@@ -71,6 +74,13 @@ impl Artifact {
 /// is emitted somewhere, tables have exactly one pk).
 pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
     let mut artifacts = system::artifacts(spec);
+    artifacts.extend(nix::artifacts(spec));
+    if spec.services.iter().any(|s| s.lang == Some(Lang::Rust)) {
+        artifacts.push(cargo_lock::cargo_lock(spec));
+    }
+    if let Some(script) = db::bin_db(spec) {
+        artifacts.push(Artifact::script("bin/db", script));
+    }
     artifacts.push(Artifact::script("bin/smoke", smoke::bin_smoke(spec)));
     artifacts.push(Artifact::file("docs/index.html", docs::index_html(spec)));
     for (index, service) in spec.services.iter().enumerate() {

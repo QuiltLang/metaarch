@@ -18,7 +18,7 @@ pub(crate) fn artifacts(spec: &SystemSpec, index: usize) -> Vec<Artifact> {
     let mut out = vec![
         Artifact::file(
             format!("{}/Cargo.toml", service.name),
-            cargo_toml(spec, service, !events.is_empty()),
+            cargo_toml(spec, service),
         ),
         Artifact::file(
             format!("{}/src/main.rs", service.name),
@@ -65,19 +65,16 @@ fn rust_events<'a>(spec: &'a SystemSpec, index: usize) -> Vec<&'a EventType> {
     events
 }
 
-/// The service's crate manifest. Serde only appears when the service touches
-/// events; versions are pinned coarsely so `generate` stays deterministic.
-fn cargo_toml(spec: &SystemSpec, service: &Service, has_events: bool) -> String {
-    let mut out = format!(
-        "{}\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\naxum = \"0.8\"\n",
+/// The service's crate manifest. The dependency set is the same for every
+/// service — a closed set, so the vendored canonical `Cargo.lock` (see
+/// `cargo_lock`) is valid for any generated workspace; versions are pinned
+/// coarsely so `generate` stays deterministic.
+fn cargo_toml(spec: &SystemSpec, service: &Service) -> String {
+    format!(
+        "{}\n\n[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\naxum = \"0.8\"\nserde = {{ version = \"1\", features = [\"derive\"] }}\nserde_json = \"1\"\ntokio = {{ version = \"1\", features = [\"full\"] }}\n",
         header(&spec.name, "#"),
         service.name,
-    );
-    if has_events {
-        out.push_str("serde = { version = \"1\", features = [\"derive\"] }\nserde_json = \"1\"\n");
-    }
-    out.push_str("tokio = { version = \"1\", features = [\"full\"] }\n");
-    out
+    )
 }
 
 /// `src/main.rs`: router wiring, one handler per event route, and the

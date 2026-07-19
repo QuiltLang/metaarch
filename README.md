@@ -46,8 +46,12 @@ cargo test                           # parser + validation tests
 ```
 
 Generated systems follow the same repo shape as this one: a `nix/` env, a
-`bin/main` entrypoint that boots the fleet, one directory per service. Try
-the shop:
+`bin/main` entrypoint that boots the fleet, one directory per service — plus
+a root `flake.nix` that builds every service (`nix build .#orders`), runs
+the fleet from the store (`nix run`), and exports a NixOS module per
+service. `bin/main` provisions the declared databases first (`bin/db up`:
+postgres under `.pgdata/`, schema + seed applied on creation; run inside the
+generated dev shell so the db tools are on PATH). Try the shop:
 
 ```sh
 cd out/shop && bin/main &            # build + boot gateway, orders, notifier

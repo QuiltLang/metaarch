@@ -1,0 +1,264 @@
+//! Nix deployment artifacts, emitted as *generated Nix* (quilt's nix target):
+//! the root `flake.nix` (per-service package builds, `nix run` apps, a fleet
+//! orchestrator app, and per-service NixOS modules), the `nix/flake.nix` dev
+//! shell the `.envrc` loads, and one `nix/modules/<service>.nix` per service.
+//!
+//! The generated Nix leans on three spliceable positions quilt's nix target
+//! supports: expression values, lifted strings, and variadic list interiors.
+//! Everything keyed by a service name goes through `builtins.listToAttrs`
+//! (attrset keys are plain strings there) and the NixOS modules bind their
+//! varying names in a `let`, so no identifier positions are ever spliced.
+//!
+//! This is the `.rs.quilt` source for the generated `nix.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+
+#![allow(clippy::unit_arg)]
+
+use metaarch_spec::{Engine, Lang, SystemSpec};
+use quilt::prelude::*;
+
+use crate::{Artifact, header};
+
+pub(crate) fn artifacts(spec: &SystemSpec) -> Vec<Artifact> {
+    let mut out = vec![
+        Artifact::file("flake.nix", root_flake(spec)),
+        Artifact::file("nix/flake.nix", dev_flake(spec)),
+    ];
+    for (index, service) in spec.services.iter().enumerate() {
+        out.push(Artifact::file(
+            format!("nix/modules/{}.nix", service.name),
+            module(spec, index),
+        ));
+    }
+    out
+}
+
+/// `pkgs.*` package expressions for the dev shell: every toolchain the fleet
+/// needs, the database engines `bin/db` drives, and curl for `bin/smoke`.
+fn dev_packages(spec: &SystemSpec) -> Vec<⟨T⟩> {
+    let mut packages: Vec<⟨T⟩> = Vec::new();
+    if spec.services.iter().any(|s| s.lang == Some(Lang::Rust)) {
+        packages.push(nix↖pkgs.cargo↗);
+        packages.push(nix↖pkgs.rustc↗);
+    }
+    if spec.services.iter().any(|s| s.lang == Some(Lang::Python)) {
+        packages.push(nix↖pkgs.python3↗);
+    }
+    if has_engine(spec, Engine::Postgres) {
+        packages.push(nix↖pkgs.postgresql↗);
+    }
+    if has_engine(spec, Engine::Sqlite) {
+        packages.push(nix↖pkgs.sqlite↗);
+    }
+    packages.push(nix↖pkgs.curl↗);
+    packages
+}
+
+fn has_engine(spec: &SystemSpec, engine: Engine) -> bool {
+    spec.services
+        .iter()
+        .any(|s| s.db.as_ref().is_some_and(|db| db.engine == engine))
+}
+
+/// The root flake: one buildable package per service (`nix build .#orders`),
+/// a `fleet` orchestrator app that boots every built service, and the NixOS
+/// modules. Initialize git in the generated system before using it — flake
+/// evaluation copies the source tree, and only a git tree filters `target/`.
+fn root_flake(spec: &SystemSpec) -> String {
+    let desc = format!(
+        "The generated `{}` system: per-service builds, fleet app, NixOS modules",
+        spec.name
+    );
+
+    // `services` attrset entries: { name = "…"; value = <derivation>; }.
+    let mut entries: Vec<⟨T⟩> = Vec::new();
+    for service in &spec.services {
+        let name = service.name.clone();
+        let entry = match service.lang.expect("validated: service has a lang") {
+            Lang::Rust => nix↖{
+                name = ↙name.↑↘;
+                value = pkgs.rustPlatform.buildRustPackage {
+                  pname = ↙name.↑↘;
+                  version = "0.1.0";
+                  src = self;
+                  cargoLock.lockFile = ./Cargo.lock;
+                  cargoBuildFlags = [ "-p" ↙name.↑↘ ];
+                  doCheck = false;
+                };
+              }↗,
+            Lang::Python => nix↖{
+                name = ↙name.↑↘;
+                value = pkgs.writeShellApplication {
+                  name = ↙name.↑↘;
+                  runtimeInputs = [ pkgs.python3 ];
+                  text = "cd ${self}/" + ↙name.↑↘ + " || exit 1\nexec python3 -u -m " + ↙name.↑↘;
+                };
+              }↗,
+        };
+        entries.push(entry);
+    }
+
+    // The fleet script needs no store paths: every service package is on
+    // PATH via runtimeInputs, so the lifted text is interpolation-free.
+    let mut fleet_text = String::from("trap 'kill 0' EXIT\n");
+    for service in &spec.services {
+        fleet_text.push_str(&service.name);
+        fleet_text.push_str(" &\n");
+    }
+    fleet_text.push_str("wait\n");
+
+    // nixosModules entries; each module file takes `self` first.
+    let mut module_entries: Vec<⟨T⟩> = Vec::new();
+    for service in &spec.services {
+        let name = service.name.clone();
+        module_entries.push(nix↖{
+            name = ↙name.↑↘;
+            value = import (./nix/modules + ("/" + ↙name.↑↘ + ".nix")) self;
+          }↗);
+    }
+
+    let packages = dev_packages(spec);
+    let flake = nix↖{
+      description = ↙desc.↑↘;
+
+      inputs = {
+        nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+        flake-utils.url = "github:numtide/flake-utils";
+      };
+
+      outputs = { self, nixpkgs, flake-utils }:
+        (flake-utils.lib.eachDefaultSystem (system:
+          let
+            pkgs = nixpkgs.legacyPackages.${system};
+            services = builtins.listToAttrs [
+              ↙{
+                  for entry in entries {
+                      entry.←;
+                      NL.←;
+                  }
+              }↘
+            ];
+            fleet = pkgs.writeShellApplication {
+              name = "fleet";
+              runtimeInputs = builtins.attrValues services;
+              text = ↙fleet_text.↑↘;
+            };
+          in {
+            packages = services // { fleet = fleet; default = fleet; };
+            apps = builtins.mapAttrs
+              (name: drv: { type = "app"; program = "${drv}/bin/${name}"; })
+              (services // { fleet = fleet; })
+              // { default = { type = "app"; program = "${fleet}/bin/fleet"; }; };
+            devShells.default = pkgs.mkShell {
+              packages = [ ↙{
+                  for p in packages {
+                      p.←;
+                      " ".←;
+                  }
+              }↘ ];
+            };
+          }))
+        // {
+          nixosModules = builtins.listToAttrs [
+            ↙{
+                for entry in module_entries {
+                    entry.←;
+                    NL.←;
+                }
+            }↘
+          ];
+        };
+    }↗;
+    format!("{}\n{}", header(&spec.name, "#"), flake.coparse())
+}
+
+/// The dev-shell flake the `.envrc` loads (`use flake ./nix`): toolchains,
+/// database engines, curl. The buildable packages live in the root flake.
+fn dev_flake(spec: &SystemSpec) -> String {
+    let desc = format!("Dev environment for the generated `{}` system", spec.name);
+    let packages = dev_packages(spec);
+    let flake = nix↖{
+      description = ↙desc.↑↘;
+
+      inputs = {
+        nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+        flake-utils.url = "github:numtide/flake-utils";
+      };
+
+      outputs = { self, nixpkgs, flake-utils }:
+        flake-utils.lib.eachDefaultSystem (system:
+          let
+            pkgs = nixpkgs.legacyPackages.${system};
+          in {
+            devShells.default = pkgs.mkShell {
+              packages = [ ↙{
+                  for p in packages {
+                      p.←;
+                      " ".←;
+                  }
+              }↘ ];
+            };
+          });
+    }↗;
+    format!("{}\n{}", header(&spec.name, "#"), flake.coparse())
+}
+
+/// A NixOS module for one service: `services.<system>.<service>.enable` runs
+/// the flake-built package as a hardened systemd unit. The service names vary
+/// only in `let`-bound strings; every attrset keyed by them is built with
+/// `builtins.listToAttrs`, so the module body is static Nix.
+fn module(spec: &SystemSpec, index: usize) -> String {
+    let service = &spec.services[index];
+    let sys = spec.name.clone();
+    let name = service.name.clone();
+    let unit = format!("{}-{}", spec.name, service.name);
+    let addr = crate::service_addr(service, index);
+
+    let module = nix↖self:
+    { config, lib, pkgs, ... }:
+    let
+      system = ↙sys.↑↘;
+      name = ↙name.↑↘;
+      unit = ↙unit.↑↘;
+      addr = ↙addr.↑↘;
+      cfg = config.services.${system}.${name};
+    in
+    {
+      options.services = builtins.listToAttrs [
+        {
+          name = system;
+          value = builtins.listToAttrs [
+            {
+              name = name;
+              value = {
+                enable = lib.mkEnableOption ("the " + system + " " + name + " service, generated by metaarch");
+                package = lib.mkOption {
+                  type = lib.types.package;
+                  default = self.packages.${pkgs.system}.${name};
+                  description = "Package providing the " + name + " binary.";
+                };
+              };
+            }
+          ];
+        }
+      ];
+      config = lib.mkIf cfg.enable {
+        systemd.services = builtins.listToAttrs [
+          {
+            name = unit;
+            value = {
+              description = system + " " + name + " (generated by metaarch; listens on " + addr + ")";
+              wantedBy = [ "multi-user.target" ];
+              after = [ "network.target" ];
+              serviceConfig = {
+                ExecStart = "${cfg.package}/bin/" + name;
+                Restart = "on-failure";
+                DynamicUser = true;
+              };
+            };
+          }
+        ];
+      };
+    }↗;
+    format!("{}\n{}", header(&spec.name, "#"), module.coparse())
+}

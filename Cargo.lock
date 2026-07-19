@@ -489,7 +489,7 @@ dependencies = [
 [[package]]
 name = "quiltlang"
 version = "0.5.0"
-source = "git+https://github.com/QuiltLang/quilt.git?tag=v0.5.0#fb66980733d53b5258f499c36a3c6a865ac3cece"
+source = "git+https://github.com/QuiltLang/quilt.git?rev=ba27c41#ba27c414031ae934dc1e1e7c68b27465e10e447c"
 dependencies = [
  "cc",
  "clap",
