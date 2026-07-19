@@ -105,24 +105,46 @@ service hermetically from the emitted lock and the binary serves `/health`;
 `nix flake show` lists apps, packages, dev shell, and three NixOS modules.
 `bin/smoke`: 7/7 routes pass.
 
-## Phase 4 — quilt integration (the endgame; not started — next up)
+## Phase 4 — quilt integration (the endgame; in progress)
 
-Fold the DSL into quilt itself so `.arch` files can carry inline fragments of
-other languages for fine-grained control of the generated code:
+Make the DSL a first-class quilt language so `.arch` files can carry inline
+fragments of other languages for fine-grained control of the generated code
+(arch is *not* folded into quilt itself — see the dynamic-registration
+decision below):
 
-- [ ] Escape hatch first: an `impl` block in the DSL attaching a raw code
-      fragment to a service/endpoint, carried as an opaque string
-- [ ] Implement quilt's `Language` trait for arch (no tree-sitter needed —
-      the bootstrap language shows the pattern), so `.arch.quilt` files parse
-      and arch fragments can be quoted from host metaprograms
+- [x] Escape hatch first: `impl get|post /path ↖ … ↗` service entries — an
+      HTTP route whose handler body is an inline fragment in the service's
+      own language, carried as an opaque dedented string, spliced into the
+      generated service, and covered by docs rows, smoke checks, and route
+      validation
+- [x] Register arch as a *dynamic* quilt language — and it took **zero
+      quilt changes**: the `Box<dyn Language>` hook already exists at the
+      pinned rev (`DictMulti::add_lang`). `metaarch-lang` implements the
+      `Language` trait by hand (flat-node lexer + recursive descent to
+      `QTerm`, trivia-preserving, holes at name/value/entry/field/fragment
+      positions); `metaarch-expand` registers it beside the built-in set and
+      now drives `bin/expand` (its output is byte-identical to the quilt
+      CLI's). `.arch.quilt` files parse — with `impl` fragments as real
+      parsed `rust↖…↗` quotes — and host metaprograms can quote and splice
+      arch (`arch↖system ↙name↘ …↗`)
 - [ ] Inline quotes inside `.arch`: `rust↖ ... ↗` bodies on services/handlers,
       spliced into the generated code at expansion time — replacing the
       string escape hatch with real ASTs
 - [ ] tree-sitter-arch grammar + LSP wiring for highlighting and diagnostics
       in editors (quilt-lsp multiplexes the embedded languages)
 
-**Demo:** an `.arch` file where one endpoint's body is written inline in Rust
-between arrow brackets, type-checked in place by the LSP.
+**Demo (4a works):** `examples/shop.arch` gives the gateway
+`impl get /hello ↖ "hello from an inline fragment!\n" ↗` and the notifier a
+Python `/stats` route; one `generate` wires both into router/dispatch, docs,
+and `bin/smoke` — 9/9 routes pass.
+
+**Demo (4b works):** `cargo run -p metaarch-expand -- parse
+examples/hello.arch.quilt` parses an `.arch.quilt` file whose impl body is a
+real tree-sitter-parsed `rust↖…↗` quote, through the same dynamic registry
+that `bin/expand` now uses for every generator.
+
+**Demo (endgame):** an `.arch` file where one endpoint's body is written
+inline in Rust between arrow brackets, type-checked in place by the LSP.
 
 ## Stretch
 
@@ -137,7 +159,7 @@ between arrow brackets, type-checked in place by the LSP.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#17 as of 2026-07-19); new decisions get both an entry
+label (issues #1–#23 as of 2026-07-19); new decisions get both an entry
 here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -206,6 +228,40 @@ here and an issue.
   landed after `v0.5.0`, so the pin moved to `ba27c41` (the sibling
   checkout `bin/expand` uses, keeping expander and runtime matched). Return
   to a tag at the next quilt release.
+- **`impl` routes carry method + path** (2026-07-19): the plan's "attach a
+  fragment to a service/endpoint" needs an endpoint surface the DSL didn't
+  have, so the escape hatch *is* the endpoint surface:
+  `impl get /hello ↖ … ↗`. A bare named handler would be dead code; a route
+  is curl-able, smoke-checkable, and documentable on day one.
+- **Fragments are handler bodies, appended as text** (2026-07-19): the
+  fragment is the *body* of the handler (Rust: tail expression of an
+  `impl IntoResponse` fn; Python: function body returning the response
+  text), dedented at lex time. Generators append these handlers to the
+  output as plain text — honest about phase 4a's opaque-string carrier —
+  and wire them up by generated name (`impl_<method>_<path>`), which
+  validation keeps collision-free and off the derived routes.
+- **arch stays out of quilt; languages register dynamically** (2026-07-19,
+  user decision): quilt must not hardcode the arch language. Instead quilt
+  gets a `Box<dyn Language>` dynamic-registration hook and metaarch
+  registers arch through it. Any quilt-side changes are prototyped locally
+  and never pushed from this project.
+- **The hook already existed — `metaarch-expand` replaces the sibling CLI**
+  (2026-07-19): at the pinned rev, `DictMulti::add_lang` *is* the
+  `Box<dyn Language>` hook, so 4b shipped with zero quilt changes. What was
+  actually missing was a driver: quilt's stock CLI is hardwired to the
+  closed `Omni` set, so the workspace grew `metaarch-expand` (~60 lines of
+  library glue) and `bin/expand` now runs it — proven by byte-identical
+  re-expansion of every existing generator.
+- **The arch `Language` is syntax; `metaarch-spec` stays the semantics**
+  (2026-07-19): the quilt-side parser (`metaarch-lang`) is deliberately
+  loose — any identifier parses as a type — and produces a trivia-preserving
+  `QTerm` with splice holes. The closed type set, topology checks, and
+  `SystemSpec` remain in `metaarch-parser`/`metaarch-spec`, which validate
+  the expanded/coparsed output. Two parsers, two jobs; they converge when
+  4c derives the spec from the QTerm. Known 4b limits, revisited in 4c:
+  arch has no `MetaLanguage` yet (so `.arch.quilt` is parse-only — no
+  expansion), and `.↑` lifts into arch are impossible because quilt's rust
+  meta keys lift spellings statically per target.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and

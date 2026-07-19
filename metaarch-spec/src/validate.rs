@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use crate::{Service, Span, SystemSpec, Table, Ty};
+use crate::{Lang, Method, Service, Span, SystemSpec, Table, Ty};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Severity {
@@ -57,6 +57,7 @@ pub fn validate(spec: &SystemSpec) -> Vec<Diagnostic> {
     check_ports(spec, &mut diags);
     let events = check_events(spec, &mut diags);
     check_consumes(spec, &events, &mut diags);
+    check_impls(spec, &mut diags);
     for service in &spec.services {
         check_service(service, &mut diags);
     }
@@ -176,6 +177,80 @@ fn check_consumes(spec: &SystemSpec, events: &HashMap<&str, &str>, diags: &mut V
     }
 }
 
+/// Check `impl` routes: they must not shadow a route the generators derive
+/// from the spec (health, peers, emit, event delivery), must be unique per
+/// service, and their generated handler names must not collide.
+fn check_impls(spec: &SystemSpec, diags: &mut Vec<Diagnostic>) {
+    let multi = spec.services.len() > 1;
+    for service in &spec.services {
+        let mut derived: Vec<(Method, String, String)> =
+            vec![(Method::Get, "/health".into(), "the health route".into())];
+        if multi && service.lang == Some(Lang::Rust) {
+            derived.push((Method::Get, "/peers".into(), "the peers route".into()));
+        }
+        for event in &service.emits {
+            derived.push((
+                Method::Post,
+                format!("/emit/{}", event.name),
+                format!("the emit route for event `{}`", event.name),
+            ));
+        }
+        for (name, _) in &service.consumes {
+            derived.push((
+                Method::Post,
+                format!("/events/{name}"),
+                format!("the delivery route for event `{name}`"),
+            ));
+        }
+
+        let mut seen: HashMap<(Method, &str), Span> = HashMap::new();
+        let mut names: HashMap<String, &str> = HashMap::new();
+        for route in &service.impls {
+            let label = format!("{} {}", route.method.upper(), route.path);
+            if let Some((_, _, what)) = derived
+                .iter()
+                .find(|(m, p, _)| *m == route.method && *p == route.path)
+            {
+                error(
+                    diags,
+                    route.span,
+                    format!("impl route `{label}` collides with {what} the generators derive"),
+                );
+            }
+            if let Some(first) = seen.get(&(route.method, route.path.as_str())) {
+                error(
+                    diags,
+                    route.span,
+                    format!("duplicate impl route `{label}` (first declared at {first})"),
+                );
+            } else {
+                seen.insert((route.method, &route.path), route.span);
+            }
+            if let Some(other) = names.get(&route.handler_name()) {
+                error(
+                    diags,
+                    route.span,
+                    format!(
+                        "impl routes `{}` and `{}` generate the same handler name `{}`",
+                        other,
+                        route.path,
+                        route.handler_name()
+                    ),
+                );
+            } else {
+                names.insert(route.handler_name(), &route.path);
+            }
+            if route.body.is_empty() {
+                warning(
+                    diags,
+                    route.span,
+                    format!("impl route `{label}` has an empty fragment"),
+                );
+            }
+        }
+    }
+}
+
 fn check_service(service: &Service, diags: &mut Vec<Diagnostic>) {
     if service.lang.is_none() {
         error(
@@ -189,6 +264,7 @@ fn check_service(service: &Service, diags: &mut Vec<Diagnostic>) {
         && service.db.is_none()
         && service.emits.is_empty()
         && service.consumes.is_empty()
+        && service.impls.is_empty()
     {
         warning(
             diags,
@@ -287,6 +363,7 @@ mod tests {
             db: None,
             emits: Vec::new(),
             consumes: Vec::new(),
+            impls: Vec::new(),
             span: span(),
         }
     }
@@ -357,6 +434,60 @@ mod tests {
                 .iter()
                 .any(|d| d.severity == Severity::Warning && d.message.contains("never consumed"))
         );
+    }
+
+    #[test]
+    fn rejects_impl_shadowing_derived_route() {
+        let mut svc = service("api");
+        svc.impls.push(crate::ImplRoute {
+            method: Method::Get,
+            path: "/health".into(),
+            body: "\"nope\"".into(),
+            span: span(),
+        });
+        let spec = SystemSpec {
+            name: "sys".into(),
+            services: vec![svc],
+        };
+        let errs = errors(&spec);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("collides with the health route"), "{errs:?}");
+    }
+
+    #[test]
+    fn rejects_impl_handler_name_collision() {
+        let mut svc = service("api");
+        for path in ["/a/b", "/a_b"] {
+            svc.impls.push(crate::ImplRoute {
+                method: Method::Get,
+                path: path.into(),
+                body: "\"x\"".into(),
+                span: span(),
+            });
+        }
+        let spec = SystemSpec {
+            name: "sys".into(),
+            services: vec![svc],
+        };
+        let errs = errors(&spec);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("same handler name"), "{errs:?}");
+    }
+
+    #[test]
+    fn accepts_impl_route() {
+        let mut svc = service("api");
+        svc.impls.push(crate::ImplRoute {
+            method: Method::Get,
+            path: "/hello".into(),
+            body: "\"hi\"".into(),
+            span: span(),
+        });
+        let spec = SystemSpec {
+            name: "sys".into(),
+            services: vec![svc],
+        };
+        assert_eq!(errors(&spec), Vec::<String>::new());
     }
 
     #[test]

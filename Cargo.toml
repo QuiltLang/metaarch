@@ -2,6 +2,8 @@
 members = [
   "metaarch",
   "metaarch-codegen",
+  "metaarch-expand",
+  "metaarch-lang",
   "metaarch-parser",
   "metaarch-spec",
 ]

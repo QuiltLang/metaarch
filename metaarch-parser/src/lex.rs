@@ -8,6 +8,10 @@ use crate::ParseError;
 pub enum Tok {
     Ident(String),
     Int(u64),
+    /// A route path: `/` followed by path characters (`/orders/count`).
+    Path(String),
+    /// A raw `↖ … ↗` code fragment, dedented (see [`dedent`]).
+    Fragment(String),
     Colon,
     Comma,
     LBrace,
@@ -22,6 +26,8 @@ impl std::fmt::Display for Tok {
         match self {
             Tok::Ident(name) => write!(f, "`{name}`"),
             Tok::Int(n) => write!(f, "`{n}`"),
+            Tok::Path(path) => write!(f, "`{path}`"),
+            Tok::Fragment(_) => write!(f, "a `↖ … ↗` fragment"),
             Tok::Colon => write!(f, "`:`"),
             Tok::Comma => write!(f, "`,`"),
             Tok::LBrace => write!(f, "`{{`"),
@@ -31,6 +37,40 @@ impl std::fmt::Display for Tok {
             Tok::Eof => write!(f, "end of file"),
         }
     }
+}
+
+/// Normalize a raw fragment: strip leading/trailing blank lines and the
+/// common leading whitespace, so generators can re-indent it per target.
+fn dedent(text: &str) -> String {
+    if !text.contains('\n') {
+        return text.trim().to_string();
+    }
+    let lines: Vec<&str> = text.lines().collect();
+    let Some(start) = lines.iter().position(|l| !l.trim().is_empty()) else {
+        return String::new();
+    };
+    let end = lines
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .expect("a non-blank line exists");
+    let lines = &lines[start..=end];
+    let indent = lines
+        .iter()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.len() - l.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    lines
+        .iter()
+        .map(|l| {
+            if l.trim().is_empty() {
+                ""
+            } else {
+                &l[indent.min(l.len())..]
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +139,48 @@ impl<'a> Lexer<'a> {
             };
 
             let tok = match c {
+                '/' => {
+                    let mut path = String::from('/');
+                    while let Some(&d) = self.chars.peek() {
+                        if d.is_ascii_alphanumeric() || d == '_' || d == '-' || d == '/' {
+                            path.push(d);
+                            self.bump();
+                        } else {
+                            break;
+                        }
+                    }
+                    Tok::Path(path)
+                }
+                // A raw code fragment between quilt's arrow brackets. The
+                // brackets nest (a fragment may itself quote), and the text
+                // is carried opaquely — the target language parses it later.
+                '↖' => {
+                    let mut depth = 1u32;
+                    let mut text = String::new();
+                    loop {
+                        let Some(c) = self.bump() else {
+                            return Err(ParseError {
+                                message: "unterminated `↖ … ↗` fragment".into(),
+                                span,
+                            });
+                        };
+                        match c {
+                            '↖' => {
+                                depth += 1;
+                                text.push(c);
+                            }
+                            '↗' => {
+                                depth -= 1;
+                                if depth == 0 {
+                                    break;
+                                }
+                                text.push(c);
+                            }
+                            c => text.push(c),
+                        }
+                    }
+                    Tok::Fragment(dedent(&text))
+                }
                 ':' => Tok::Colon,
                 ',' => Tok::Comma,
                 '{' => Tok::LBrace,

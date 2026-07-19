@@ -11,8 +11,10 @@ Generators are **quilt metaprograms**: `.rs.quilt` sources in
 with unquotes and lifts. This is the nanobots pattern:
 
 - `.rs.quilt` files live next to their expanded `.rs` siblings (gitignored)
-- `bin/expand` re-expands them via the sibling quilt checkout (`$QUILT`
-  overrides); run it after editing any `.quilt` source, before `cargo build`
+- `bin/expand` re-expands them via `metaarch-expand`, the workspace's own
+  expander binary — quilt's built-in languages plus `arch` registered
+  dynamically (`DictMulti::add_lang`, phase 4b); run it after editing any
+  `.quilt` source, before `cargo build`
 - the expanded generators compile into `metaarch-codegen` as ordinary Rust,
   so `metaarch generate` is one static binary calling generator functions
 
@@ -132,6 +134,7 @@ generated system before `nix build` so the source copy filters `target/`).
 | `table` | DDL + seed rows + migration steps; Rust structs + query helpers (phase 4) |
 | `emits E { ... }` | Rust struct / Python dataclass for `E`, client `emit_e` method, emit route, smoke check, docs entry |
 | `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |
+| `impl get /x ↖…↗` | route + handler with the inline fragment as its body, smoke check, docs row |
 | whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, README, `system.arch` snapshot |
 
 ## Event transport (MVP)
@@ -154,6 +157,10 @@ Concretely, every service (either language) serves the same route shape:
   trigger for every event path until phase 4 gives services real handlers.
 - `POST /events/<E>` — on each consumer of `E`: parse into the typed
   struct/dataclass and log the delivery.
+- any `impl` route the service declares (phase 4a) — the inline fragment
+  becomes the handler body. Fragments are opaque strings, so their handlers
+  are appended to the generated file as text (not built as terms) and wired
+  into the router/dispatch by generated name (`impl_<method>_<path>`).
 
 Services without a declared `port` listen on a deterministic fallback
 (`9000 + index` of the service in the file), so every consumer is

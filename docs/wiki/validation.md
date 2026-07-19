@@ -42,6 +42,14 @@ Structure:
 - every table has exactly one `pk` field
 - `pk` is rejected on event fields
 
+Impl routes (phase 4a):
+
+- an `impl` route must not collide with a route the generators derive
+  (`GET /health`, `GET /peers`, `POST /emit/<E>`, `POST /events/<E>`)
+- no duplicate method+path per service; no two impl routes may flatten to
+  the same generated handler name (`/a/b` vs `/a_b`)
+- *warning:* an empty fragment
+
 Some overlapping checks live in the parser instead, where the error message
 is better served by syntax position: duplicate `lang`/`port`/`db` entries,
 unknown types, unknown languages, out-of-range ports.
