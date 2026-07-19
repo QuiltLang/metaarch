@@ -19,6 +19,9 @@
             pkgs.rust-script
             pkgs.cargo-nextest
             pkgs.lolcat
+            # bin/grammar: regenerate tree-sitter-arch (the CLI drives node).
+            pkgs.tree-sitter
+            pkgs.nodejs
           ];
 
           RUST_BACKTRACE = "1";

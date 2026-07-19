@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+# Regenerate tree-sitter-arch's parser from grammar.js and run the corpus
+# tests. `src/parser.c` (and grammar.json/node-types.json) are committed —
+# like quilt's vendored grammars — so `cargo build` never needs the
+# tree-sitter CLI; run this after editing grammar.js or the corpus.
+# The CLI (and the node it uses) are in the nix dev shell.
+set -e
+cd "$(dirname "$0")/../tree-sitter-arch"
+
+tree-sitter generate
+tree-sitter test

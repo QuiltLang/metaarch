@@ -1,0 +1,18 @@
+[package]
+name = "tree-sitter-arch"
+description = "arch grammar for tree-sitter"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[lib]
+path = "bindings/rust/lib.rs"
+
+[dependencies]
+tree-sitter-language.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+
+[dev-dependencies]
+tree-sitter.workspace = true
