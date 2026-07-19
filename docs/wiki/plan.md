@@ -44,10 +44,11 @@ bin/main` boots the shop; `curl -X POST 127.0.0.1:8081/emit/OrderPlaced -d
 '{"order_id": "…", "total": 4999}'` makes the Python notifier print the
 typed event.
 
-## Phase 2 — the full artifact fan-out
+## Phase 2 — the full artifact fan-out (not started — next up)
 
 Widen what one `.arch` line touches. Each item is a new generator over the
-same `SystemSpec`:
+same `SystemSpec`. Phase 1 left the ground ready: `generate` is
+deterministic, so this phase's diff demo will work:
 
 - [ ] Typed Rust **clients** for every service's API; the gateway uses them
 - [ ] **Migrations**: diff the previous generated schema, emit `ALTER` steps
@@ -60,10 +61,11 @@ same `SystemSpec`:
 **Demo:** add one field to `OrderPlaced`; show the diff touching Rust, Python,
 SQL, docs, and tests in one `generate` run.
 
-## Phase 3 — Nix deployment
+## Phase 3 — Nix deployment (not started)
 
 Lean into quilt's string-based Nix host: the deployment is *generated Nix*,
-not hand-written.
+not hand-written. (Phase 1 ships a stopgap: generated systems already get a
+plain-text `nix/flake.nix` dev shell, which this phase replaces.)
 
 - [ ] `.nix.quilt` generator emitting the generated system's `nix/flake.nix`:
       a dev shell with each service's toolchain, plus `nix run` apps per
@@ -74,7 +76,7 @@ not hand-written.
 **Demo:** `cd out/shop && direnv allow && bin/main` — a reproducible boot of
 the whole fleet on a clean machine.
 
-## Phase 4 — quilt integration (the endgame)
+## Phase 4 — quilt integration (the endgame; not started)
 
 Fold the DSL into quilt itself so `.arch` files can carry inline fragments of
 other languages for fine-grained control of the generated code:
