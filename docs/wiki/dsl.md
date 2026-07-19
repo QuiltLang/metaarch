@@ -41,7 +41,7 @@ entry    = "lang" ("rust" | "python")
          | "db" ("postgres" | "sqlite") "{" table* "}"
          | "emits" ident "{" field* "}"
          | "consumes" ident
-         | "impl" ("get" | "post") path "↖" fragment "↗" ;
+         | "impl" ("get" | "post") path [ "rust" | "python" ] "↖" fragment "↗" ;
 path     = "/" { letter | digit | "_" | "-" | "/" } ;
 table    = "table" ident "{" field* "}" ;
 field    = ident ":" type [ "pk" ] [ "," ] ;
@@ -67,15 +67,18 @@ otherwise); `emits` and `consumes` may repeat.
   cross-service contract. `consumes` names an event some service must emit;
   the validator resolves these references globally. One event, one emitter —
   many consumers.
-- **`impl`** (phase 4a) is the escape hatch for bespoke logic: an HTTP route
-  whose handler body is written inline between quilt's arrow brackets, in
-  the service's own language. The fragment travels as an opaque, dedented
-  string and is spliced into the generated service — in Rust as the tail
-  expression of an `impl IntoResponse` handler, in Python as the body of a
-  function returning the response text. Impl routes get docs rows and smoke
+- **`impl`** (phase 4a; real ASTs since 4c) is the hatch for bespoke logic:
+  an HTTP route whose handler body is written inline between quilt's arrow
+  brackets, in the service's own language. The fragment is parsed with the
+  real grammar of that language (the same tree-sitter `Language`s quilt's
+  quotes use — a syntax error fails `check`) and the parsed term is spliced
+  into the generated service — in Rust as the tail expression of an
+  `impl IntoResponse` handler, in Python as the body of a function returning
+  the response text. The brackets may carry the quote's language annotation
+  (`rust↖ … ↗`, the `.arch.quilt` spelling); it is optional in plain `.arch`
+  and must match the service's `lang`. Impl routes get docs rows and smoke
   checks like every derived route; the validator rejects routes that shadow
-  a derived one (`/health`, `/peers`, `/emit/*`, `/events/*`). Phase 4c
-  upgrades the same syntax from opaque strings to real quoted ASTs.
+  a derived one (`/health`, `/peers`, `/emit/*`, `/events/*`).
 - **Types** are a closed set on purpose: each must map cleanly onto every
   target (SQL column, Rust type, Python type). `money` exists to force the
   interesting mapping question (integer cents, `NUMERIC`, `Decimal`) through

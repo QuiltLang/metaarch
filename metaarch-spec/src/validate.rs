@@ -247,6 +247,18 @@ fn check_impls(spec: &SystemSpec, diags: &mut Vec<Diagnostic>) {
                     format!("impl route `{label}` has an empty fragment"),
                 );
             }
+            if let (Some(frag), Some(lang)) = (route.frag_lang, service.lang)
+                && frag != lang
+            {
+                error(
+                    diags,
+                    route.span,
+                    format!(
+                        "impl route `{label}` annotates its fragment `{frag}` but service `{}` is `lang {lang}` — a fragment is spliced into its own service's code",
+                        service.name
+                    ),
+                );
+            }
         }
     }
 }
@@ -442,6 +454,7 @@ mod tests {
         svc.impls.push(crate::ImplRoute {
             method: Method::Get,
             path: "/health".into(),
+            frag_lang: None,
             body: "\"nope\"".into(),
             span: span(),
         });
@@ -461,6 +474,7 @@ mod tests {
             svc.impls.push(crate::ImplRoute {
                 method: Method::Get,
                 path: path.into(),
+                frag_lang: None,
                 body: "\"x\"".into(),
                 span: span(),
             });
@@ -475,11 +489,31 @@ mod tests {
     }
 
     #[test]
+    fn rejects_fragment_lang_mismatch() {
+        let mut svc = service("api"); // `service` declares `lang rust`
+        svc.impls.push(crate::ImplRoute {
+            method: Method::Get,
+            path: "/hello".into(),
+            frag_lang: Some(Lang::Python),
+            body: "return \"hi\"".into(),
+            span: span(),
+        });
+        let spec = SystemSpec {
+            name: "sys".into(),
+            services: vec![svc],
+        };
+        let errs = errors(&spec);
+        assert_eq!(errs.len(), 1);
+        assert!(errs[0].contains("annotates its fragment `python`"), "{errs:?}");
+    }
+
+    #[test]
     fn accepts_impl_route() {
         let mut svc = service("api");
         svc.impls.push(crate::ImplRoute {
             method: Method::Get,
             path: "/hello".into(),
+            frag_lang: None,
             body: "\"hi\"".into(),
             span: span(),
         });

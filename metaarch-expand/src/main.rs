@@ -1,7 +1,7 @@
 //! CLI: `metaarch-expand expand <file.quilt>…` writes each file's expanded
 //! sibling (the stem, `.quilt` stripped); `parse <file.quilt>…` parses and
 //! reports without writing — the mode for `.arch.quilt` files until arch
-//! grows a `MetaLanguage` (phase 4c).
+//! grows a `MetaLanguage` (phase 4d).
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -47,7 +47,7 @@ fn expand_file(file: &PathBuf) -> Result<()> {
     let (chain, term) = parse_stem(&mut multi, &stem, &input)?;
     if chain[0] == metaarch_lang::LANG {
         return Err(miette!(
-            "{}: arch is parse-only until it grows a MetaLanguage (phase 4c) — use `parse`",
+            "{}: arch is parse-only until it grows a MetaLanguage (phase 4d) — use `parse`",
             file.display()
         ));
     }

@@ -44,7 +44,10 @@ fn load(file: &PathBuf) -> anyhow::Result<metaarch_spec::SystemSpec> {
 
 fn check(file: &PathBuf) -> anyhow::Result<ExitCode> {
     let spec = load(file)?;
-    let diags = validate(&spec);
+    let mut diags = validate(&spec);
+    // Fragment syntax lives with the generators (they own the real
+    // grammars); a malformed `impl` body fails `check`, not `generate`.
+    diags.extend(metaarch_codegen::check_fragments(&spec));
     for diag in &diags {
         eprintln!("{diag}");
     }

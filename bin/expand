@@ -3,7 +3,7 @@
 # the workspace's own expander, which registers `arch` as a dynamic quilt
 # language on top of the built-in set (docs/wiki/plan.md, phase 4b).
 # `.arch.quilt` files are parse-checked only until arch grows a MetaLanguage
-# (phase 4c). Run after a fresh checkout and after editing any *.quilt,
+# (phase 4d). Run after a fresh checkout and after editing any *.quilt,
 # before `cargo build`.
 set -e
 cd "$(dirname "$0")/.."

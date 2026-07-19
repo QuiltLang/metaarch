@@ -42,13 +42,22 @@ Structure:
 - every table has exactly one `pk` field
 - `pk` is rejected on event fields
 
-Impl routes (phase 4a):
+Impl routes (phase 4a, fragment parsing since 4c):
 
 - an `impl` route must not collide with a route the generators derive
   (`GET /health`, `GET /peers`, `POST /emit/<E>`, `POST /events/<E>`)
 - no duplicate method+path per service; no two impl routes may flatten to
   the same generated handler name (`/a/b` vs `/a_b`)
+- a fragment's language annotation (`rust↖`/`python↖`), when present, must
+  match the service's `lang`
 - *warning:* an empty fragment
+
+One check lives beside the generators instead of in `metaarch-spec`: the
+fragment body must parse in the service's language. `metaarch check` runs
+`metaarch_codegen::check_fragments`, which parses every fragment with the
+real tree-sitter grammar (the same `Language` implementations the generated
+splice uses) and reports failures as positioned errors — a malformed
+fragment fails `check`, never `generate`.
 
 Some overlapping checks live in the parser instead, where the error message
 is better served by syntax position: duplicate `lang`/`port`/`db` entries,

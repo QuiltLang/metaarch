@@ -7,7 +7,7 @@
 
 #![allow(clippy::unit_arg)]
 
-use metaarch_spec::{EventType, Method, Service, SystemSpec};
+use metaarch_spec::{EventType, ImplRoute, Lang, Method, Service, SystemSpec};
 use quilt::prelude::*;
 
 use crate::{Artifact, header};
@@ -140,21 +140,36 @@ fn main_rs(spec: &SystemSpec, index: usize) -> String {
     if has_clients {
         items.push(peers_fn(spec, index));
     }
-
-    let mut out = format!("{}\n\n{}", header(&spec.name, "//!"), source_file(items).coparse());
-    // `impl` fragments are opaque strings (the phase-4 escape hatch), so
-    // their handlers are appended as text rather than built as terms; the
-    // fragment is the tail expression of the handler body.
     for route in &service.impls {
-        out.push_str(&format!(
-            "\n/// Inline `impl {} {}` fragment from the system description.\nasync fn {}() -> impl axum::response::IntoResponse {{\n{}\n}}\n",
-            route.method.verb(),
-            route.path,
-            route.handler_name(),
-            crate::indent(&route.body, 4),
-        ));
+        items.push(impl_fn(route));
     }
-    out
+
+    format!("{}\n\n{}", header(&spec.name, "//!"), source_file(items).coparse())
+}
+
+/// Handler for an inline `impl` route. The fragment is parsed with the real
+/// Rust grammar into a term (phase 4c) and spliced in as the tail expression
+/// of the handler body; the fn name is spec-derived, so the signature is
+/// written through the term builder (identifier positions accept no holes in
+/// the Rust grammar).
+fn impl_fn(route: &ImplRoute) -> ⟨T⟩ {
+    let body = crate::fragment::term(Lang::Rust, &route.body)
+        .expect("checked: impl fragment parses");
+    let mut b_ = tb("function_item")
+        .w(&format!(
+            "/// Inline `impl {} {}` fragment from the system description.",
+            route.method.verb(),
+            route.path
+        ))
+        .n()
+        .w(&format!(
+            "async fn {}() -> impl axum::response::IntoResponse {{",
+            route.handler_name()
+        ))
+        .p("    ")
+        .n();
+    body.emit(&mut b_);
+    b_.x().n().w("}").b()
 }
 
 /// Handler for `GET /peers`: report the health of every peer service through

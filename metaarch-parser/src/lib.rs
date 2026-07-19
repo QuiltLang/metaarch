@@ -192,7 +192,7 @@ impl Parser {
                     let (name, span) = self.ident("event name")?;
                     service.consumes.push((name, span));
                 }
-                // impl := "impl" ("get" | "post") path "↖" fragment "↗"
+                // impl := "impl" ("get" | "post") path [lang] "↖" fragment "↗"
                 "impl" => {
                     let (verb, verb_span) = self.ident("`get` or `post`")?;
                     let method = match verb.as_str() {
@@ -215,7 +215,29 @@ impl Parser {
                             );
                         }
                     };
+                    // The fragment may carry an explicit language annotation
+                    // (`rust↖ … ↗`), matching the quote spelling `.arch.quilt`
+                    // files use; validation checks it against the service's
+                    // `lang`.
                     let tok = self.next();
+                    let (frag_lang, tok) = match tok.tok {
+                        Tok::Ident(name) => {
+                            let lang = match name.as_str() {
+                                "rust" => Lang::Rust,
+                                "python" => Lang::Python,
+                                other => {
+                                    return self.err(
+                                        tok.span,
+                                        format!(
+                                            "unknown fragment language `{other}` (expected `rust` or `python`)"
+                                        ),
+                                    );
+                                }
+                            };
+                            (Some(lang), self.next())
+                        }
+                        _ => (None, tok),
+                    };
                     let body = match tok.tok {
                         Tok::Fragment(body) => body,
                         other => {
@@ -228,6 +250,7 @@ impl Parser {
                     service.impls.push(ImplRoute {
                         method,
                         path,
+                        frag_lang,
                         body,
                         span: kw_span,
                     });
@@ -433,7 +456,29 @@ service notifier {
         assert_eq!(impls[0].method, Method::Get);
         assert_eq!(impls[0].path, "/hello");
         assert_eq!(impls[0].body, "\"hi\".to_string()");
+        assert_eq!(impls[0].frag_lang, None);
         assert_eq!(impls[0].handler_name(), "impl_get_hello");
+    }
+
+    #[test]
+    fn parses_annotated_fragment() {
+        let spec = parse(
+            "system s\nservice a {\n lang rust\n impl get /hello rust↖ \"hi\" ↗\n}",
+        )
+        .unwrap();
+        let impls = &spec.services[0].impls;
+        assert_eq!(impls[0].frag_lang, Some(Lang::Rust));
+        assert_eq!(impls[0].body, "\"hi\"");
+    }
+
+    #[test]
+    fn rejects_unknown_fragment_language() {
+        let err = parse("system s\nservice a {\n lang rust\n impl get /x wgsl↖ 1 ↗\n}")
+            .unwrap_err();
+        assert!(
+            err.message.contains("unknown fragment language `wgsl`"),
+            "{err}"
+        );
     }
 
     #[test]

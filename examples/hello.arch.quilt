@@ -3,7 +3,7 @@
 # it is a real rust quote, parsed by tree-sitter inside the arch tree:
 #   cargo run -p metaarch-expand -- parse examples/hello.arch.quilt
 # Expansion of arch hosts (splicing the quote into generated code) arrives
-# with phase 4c's arch MetaLanguage.
+# with phase 4d's arch MetaLanguage.
 system hello
 
 service greeter {

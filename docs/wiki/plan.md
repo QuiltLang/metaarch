@@ -127,9 +127,18 @@ decision below):
       CLI's). `.arch.quilt` files parse — with `impl` fragments as real
       parsed `rust↖…↗` quotes — and host metaprograms can quote and splice
       arch (`arch↖system ↙name↘ …↗`)
-- [ ] Inline quotes inside `.arch`: `rust↖ ... ↗` bodies on services/handlers,
-      spliced into the generated code at expansion time — replacing the
-      string escape hatch with real ASTs
+- [x] Real-AST fragments: `impl` bodies (optionally annotated
+      `rust↖ … ↗`/`python↖ … ↗`, the `.arch.quilt` quote spelling, checked
+      against the service's `lang`) are parsed with the real tree-sitter
+      grammars — `metaarch-codegen`'s new `fragment` module, quilt's `parse`
+      feature — and spliced into the generated handlers as terms, replacing
+      the 4a text-append; a malformed fragment now fails `metaarch check`
+      with a positioned diagnostic. Generated output for the shop is
+      byte-identical to 4a's
+- [ ] An arch `MetaLanguage`, so `.arch.quilt` files *expand* (host
+      metaprograms that compute architectures; today they only parse), and
+      the plain-`.arch` generate path can converge on the quilt registry —
+      deriving `SystemSpec` from the coparsed `QTerm`
 - [ ] tree-sitter-arch grammar + LSP wiring for highlighting and diagnostics
       in editors (quilt-lsp multiplexes the embedded languages)
 
@@ -142,6 +151,12 @@ and `bin/smoke` — 9/9 routes pass.
 examples/hello.arch.quilt` parses an `.arch.quilt` file whose impl body is a
 real tree-sitter-parsed `rust↖…↗` quote, through the same dynamic registry
 that `bin/expand` now uses for every generator.
+
+**Demo (4c works):** `examples/shop.arch` spells the gateway's fragment
+`impl get /hello rust↖ … ↗`; `check` rejects `let x = ;` inside the brackets
+with a tree-sitter-backed positioned error, and `generate` splices the
+parsed expression term into the handler — emitting bytes identical to the
+4a text-append for the whole shop. `bin/smoke`: 9/9 routes pass.
 
 **Demo (endgame):** an `.arch` file where one endpoint's body is written
 inline in Rust between arrow brackets, type-checked in place by the LSP.
@@ -159,7 +174,7 @@ inline in Rust between arrow brackets, type-checked in place by the LSP.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#23 as of 2026-07-19); new decisions get both an entry
+label (issues #1–#25 as of 2026-07-19); new decisions get both an entry
 here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -258,10 +273,29 @@ here and an issue.
   `QTerm` with splice holes. The closed type set, topology checks, and
   `SystemSpec` remain in `metaarch-parser`/`metaarch-spec`, which validate
   the expanded/coparsed output. Two parsers, two jobs; they converge when
-  4c derives the spec from the QTerm. Known 4b limits, revisited in 4c:
-  arch has no `MetaLanguage` yet (so `.arch.quilt` is parse-only — no
-  expansion), and `.↑` lifts into arch are impossible because quilt's rust
-  meta keys lift spellings statically per target.
+  the spec is derived from the QTerm (now the 4d MetaLanguage bullet).
+  Known 4b limits, revisited there: arch has no `MetaLanguage` yet (so
+  `.arch.quilt` is parse-only — no expansion), and `.↑` lifts into arch are
+  impossible because quilt's rust meta keys lift spellings statically per
+  target.
+- **Fragments parse where the grammars live — codegen, not spec** (2026-07-19):
+  the parser and spec crates stay quilt-free; `metaarch-codegen` (already
+  the only quilt-runtime consumer) enables quilt's `parse` feature and
+  parses `impl` fragments with the same rust/python `Language`
+  implementations quilt's own quotes use — Rust fragments as an *expression*
+  (the handler's tail), Python fragments as a statement suite, per the 4a
+  fragments-are-handler-bodies decision. `check_fragments` runs beside
+  `validate` in `metaarch check`, so a malformed fragment fails `check`
+  (never `generate`) and generators treat "fragment parses" as one more
+  established invariant. The spec still carries the fragment as a dedented
+  string: the `.arch` file stays the source of truth, and the string is
+  what the snapshot/migration path already round-trips.
+- **Optional fragment language annotation, checked against `lang`**
+  (2026-07-19): plain `.arch` accepts `impl get /x rust↖ … ↗` — the same
+  spelling a `.arch.quilt` quote uses, so a service body can move between
+  the two files unchanged. The annotation is optional (the service's `lang`
+  is the only possible default) and validation rejects a mismatch, because
+  a fragment is always spliced into its own service's generated code.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and
