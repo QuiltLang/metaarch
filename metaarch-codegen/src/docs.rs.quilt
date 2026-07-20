@@ -33,6 +33,7 @@ pub(crate) fn index_html(spec: &SystemSpec) -> String {
         spec.services.len(),
         event_count
     );
+    let diagram = crate::viz::svg(spec);
     let topology = topology_rows(spec);
     let services = service_sections(spec);
     let events = event_sections(spec);
@@ -58,6 +59,7 @@ pub(crate) fn index_html(spec: &SystemSpec) -> String {
         <h1>↙raw(&name)↘</h1>
         <p class="meta">↙raw(&summary)↘</p>
         <h2>Topology</h2>
+        <p>↙raw(&diagram)↘</p>
         <table>
         <tr><th>service</th><th>lang</th><th>address</th><th>emits</th><th>consumes</th></tr>
         ↙raw(&topology)↘
