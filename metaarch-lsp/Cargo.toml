@@ -1,0 +1,22 @@
+[package]
+name = "metaarch-lsp"
+description = "Language server for .arch files: diagnostics from the metaarch pipeline, semantic tokens from tree-sitter-arch, embedded impl fragments highlighted with their own grammars."
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+metaarch-codegen.workspace = true
+metaarch-parser.workspace = true
+metaarch-spec.workspace = true
+# `parse` vendors the rust + python tree-sitter grammars (and python's
+# highlight query) — the same parsers the fragment checker splices with.
+quilt = {workspace = true, features = ["parse"]}
+streaming-iterator.workspace = true
+tokio = {workspace = true, features = ["full"]}
+tower-lsp.workspace = true
+tree-sitter.workspace = true
+tree-sitter-arch.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

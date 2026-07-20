@@ -1,0 +1,217 @@
+==================
+system header
+==================
+
+system shop
+
+---
+
+(source_file
+  (system
+    name: (identifier)))
+
+==================
+service entries
+==================
+
+system shop
+
+service orders {
+  lang rust
+  port 8081
+  consumes OrderPlaced
+}
+
+---
+
+(source_file
+  (system
+    name: (identifier))
+  (service
+    name: (identifier)
+    (lang_entry
+      value: (identifier))
+    (port_entry
+      value: (number))
+    (consumes_entry
+      event: (identifier))))
+
+==================
+db block with typed fields, pk, enum, trailing comma
+==================
+
+system shop
+
+service orders {
+  db postgres {
+    table orders {
+      id: uuid pk,
+      status: enum(pending, paid),
+      placed_at: timestamp,
+    }
+  }
+}
+
+---
+
+(source_file
+  (system
+    name: (identifier))
+  (service
+    name: (identifier)
+    (db_entry
+      engine: (identifier)
+      (table
+        name: (identifier)
+        (field
+          name: (identifier)
+          type: (type_name
+            (identifier))
+          (pk))
+        (field
+          name: (identifier)
+          type: (enum_type
+            (identifier)
+            (identifier)))
+        (field
+          name: (identifier)
+          type: (type_name
+            (identifier)))))))
+
+==================
+emits with an inline field list
+==================
+
+system shop
+
+service orders {
+  emits OrderPlaced { order_id: uuid, total: money }
+}
+
+---
+
+(source_file
+  (system
+    name: (identifier))
+  (service
+    name: (identifier)
+    (emits_entry
+      event: (identifier)
+      (field
+        name: (identifier)
+        type: (type_name
+          (identifier)))
+      (field
+        name: (identifier)
+        type: (type_name
+          (identifier))))))
+
+==================
+annotated impl fragment
+==================
+
+system shop
+
+service gateway {
+  impl get /hello rust↖
+    "hello!\n"
+  ↗
+}
+
+---
+
+(source_file
+  (system
+    name: (identifier))
+  (service
+    name: (identifier)
+    (impl_entry
+      method: (method
+        (identifier))
+      path: (path)
+      language: (fragment_language
+        (identifier))
+      body: (fragment
+        (fragment_text)))))
+
+==================
+un-annotated impl fragment
+==================
+
+system shop
+
+service notifier {
+  lang python
+  impl get /stats ↖
+    return "ok\n"
+  ↗
+}
+
+---
+
+(source_file
+  (system
+    name: (identifier))
+  (service
+    name: (identifier)
+    (lang_entry
+      value: (identifier))
+    (impl_entry
+      method: (method
+        (identifier))
+      path: (path)
+      body: (fragment
+        (fragment_text)))))
+
+==================
+nested arrow brackets inside a fragment
+==================
+
+system shop
+
+service gateway {
+  impl get /q rust↖ wgsl↖const N: u32 = 3u;↗.coparse() ↗
+}
+
+---
+
+(source_file
+  (system
+    name: (identifier))
+  (service
+    name: (identifier)
+    (impl_entry
+      method: (method
+        (identifier))
+      path: (path)
+      language: (fragment_language
+        (identifier))
+      body: (fragment
+        (fragment_text)
+        (fragment
+          (fragment_text))
+        (fragment_text)))))
+
+==================
+comments everywhere
+==================
+
+# leading
+system shop # trailing
+
+service s { # inside
+  lang rust
+}
+
+---
+
+(source_file
+  (comment)
+  (system
+    name: (identifier))
+  (comment)
+  (service
+    name: (identifier)
+    (comment)
+    (lang_entry
+      value: (identifier))))

@@ -105,7 +105,7 @@ service hermetically from the emitted lock and the binary serves `/health`;
 `nix flake show` lists apps, packages, dev shell, and three NixOS modules.
 `bin/smoke`: 7/7 routes pass.
 
-## Phase 4 — quilt integration (the endgame; in progress)
+## Phase 4 — quilt integration (the endgame) ✅
 
 Make the DSL a first-class quilt language so `.arch` files can carry inline
 fragments of other languages for fine-grained control of the generated code
@@ -150,8 +150,17 @@ decision below):
       expand → coparse → ordinary parser → `SystemSpec` — and round-trips
       fully annotated plain `.arch` files through the registry as a
       convergence assertion
-- [ ] tree-sitter-arch grammar + LSP wiring for highlighting and diagnostics
-      in editors (quilt-lsp multiplexes the embedded languages)
+- [x] tree-sitter-arch grammar + LSP wiring for highlighting and diagnostics
+      in editors. quilt-lsp could *not* multiplex arch — its adapter
+      registries are static matches with no `add_lang`-style hook — so, the
+      `metaarch-expand` move again, the repo grew its own: `tree-sitter-arch`
+      (a deliberately loose grammar with committed generated parser, corpus
+      tests, highlight + injection queries; `bin/grammar` regenerates) and
+      `metaarch-lsp` (diagnostics are exactly the `metaarch check` pipeline;
+      semantic tokens come from the arch grammar with each `impl` fragment
+      interior re-highlighted by its own language's grammar — the in-process,
+      highlight-only half of quilt-lsp's embedded multiplexing). See
+      [lsp](lsp.md) for editor wiring
 
 **Demo (4a works):** `examples/shop.arch` gives the gateway
 `impl get /hello ↖ "hello from an inline fragment!\n" ↗` and the notifier a
@@ -180,8 +189,20 @@ inherited from quilt's quote-body reindenting: a block-opened fragment's
 closing `↗` coparses flush-left, so only inline-bodied files round-trip
 byte-for-byte — semantically identical either way.)
 
-**Demo (endgame):** an `.arch` file where one endpoint's body is written
-inline in Rust between arrow brackets, type-checked in place by the LSP.
+**Demo (4e works):** `cargo test -p metaarch-lsp --test lsp` drives the real
+`metaarch-lsp` binary over stdio: opening a broken `.arch` file publishes a
+positioned diagnostic (the same error `metaarch check` prints), fixing it
+clears the squiggle, and `semanticTokens/full` on `examples/shop.arch`
+returns a full highlight — arch keywords/names from `tree-sitter-arch`, the
+gateway's fragment interior as Rust, the notifier's as Python (defaulted
+from `lang`, no annotation needed). `bin/grammar`: 8/8 corpus tests pass.
+
+**Demo (endgame, reached modulo type-checking):** an `.arch` file where one
+endpoint's body is written inline in Rust between arrow brackets — parsed
+with the real Rust grammar (`check` rejects malformed bodies in place),
+highlighted in place by the LSP. Full *type*-checking in place means
+proxying rust-analyzer over a projected fragment, which wants the upstream
+quilt-lsp hook — logged in the decisions below.
 
 ## Stretch
 
@@ -196,7 +217,7 @@ inline in Rust between arrow brackets, type-checked in place by the LSP.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#28 as of 2026-07-19); new decisions get both an entry
+label (issues #1–#31 as of 2026-07-19); new decisions get both an entry
 here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -345,6 +366,32 @@ here and an issue.
   un-annotated to keep the optional-annotation feature exercised. A
   quilt-side "ask the outer language for the default inner language" hook
   would lift the limit.
+- **quilt-lsp has no dynamic hook — metaarch grows its own LSP** (2026-07-19):
+  4b was free because `DictMulti::add_lang` already existed; quilt-lsp's
+  registries (`is_known_lang`, `language_adapter`, `meta_adapter`,
+  `highlighter`) are static matches with nothing to register into. Per the
+  arch-stays-out-of-quilt decision, the repo grew `metaarch-lsp` instead —
+  and its diagnostics are *exactly* the `metaarch check` pipeline (parse →
+  `validate` → `check_fragments`), so the editor and the CLI can never
+  disagree. `.arch.quilt` files keep quilt's own syntactic support only
+  until an upstream adapter-registration hook exists.
+- **tree-sitter-arch is loose, vendored, and committed** (2026-07-19): the
+  editor grammar only segments the file (any identifier parses as a
+  type/method/language — the closed sets stay in `metaarch-parser`/
+  `metaarch-spec`, mirroring the `metaarch-lang` decision), and its generated
+  `src/parser.c` is committed like quilt's vendored grammars so `cargo build`
+  never needs the tree-sitter CLI. `bin/grammar` (CLI + node, now in the dev
+  shell) regenerates and runs the corpus tests.
+- **Fragment highlighting is in-process and highlight-only** (2026-07-19):
+  `metaarch-lsp` re-highlights each `impl` fragment interior with the rust/
+  python tree-sitter grammars quilt vendors — the annotation if present,
+  else the service's `lang`, the generators' own default. No downstream
+  rust-analyzer/pyright proxying: fragments are handler *bodies*, not
+  standalone files, so a proxied server would mostly report false context
+  errors; real in-place type-checking wants quilt-lsp's projection machinery
+  behind an upstream hook. The nvim injection query covers annotated
+  fragments only (a query can't reach the sibling `lang` entry); un-annotated
+  ones are covered by the LSP semantic tokens.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and

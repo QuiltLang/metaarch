@@ -4,8 +4,10 @@ members = [
   "metaarch-codegen",
   "metaarch-expand",
   "metaarch-lang",
+  "metaarch-lsp",
   "metaarch-parser",
   "metaarch-spec",
+  "tree-sitter-arch",
 ]
 resolver = "2"
 
@@ -26,3 +28,14 @@ metaarch-spec = {path = "metaarch-spec"}
 # Pinned to a rev (not a tag): the Nix lift marker the phase-3 generators need
 # landed after v0.5.0; move back to a tag at the next quilt release.
 quilt = {git = "https://github.com/QuiltLang/quilt.git", rev = "ba27c41", package = "quiltlang", default-features = false}
+# The LSP + editor-facing grammar (phase 4e). tree-sitter is pinned to the
+# same minor quilt uses so one runtime serves the arch grammar and quilt's
+# vendored ones; tower-lsp matches quilt-lsp's.
+cc = "1"
+serde_json = "1"
+streaming-iterator = "0.1"
+tokio = "1"
+tower-lsp = "0.20"
+tree-sitter = "0.26"
+tree-sitter-arch = {path = "tree-sitter-arch"}
+tree-sitter-language = "0.1"
