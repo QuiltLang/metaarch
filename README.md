@@ -34,15 +34,24 @@ service notifier {
 ## Quickstart
 
 The direnv env (`.envrc` + `nix/flake.nix`) provides the toolchain and puts
-`bin/` on PATH; `bin/main` is the CLI entrypoint.
+`bin/` on PATH; `bin/main` is the CLI entrypoint — and with no arguments it
+runs the guided demo tour:
 
 ```sh
 direnv allow
 bin/expand                           # expand .rs.quilt generator sources (needs ../quilt)
+bin/main                             # the demo: check → fmt → generate →
+                                     #   migration diff → boot + smoke-test the fleet
+```
+
+Or piece by piece:
+
+```sh
 bin/main check examples/shop.arch    # parse + validate
 bin/main dump examples/shop.arch     # print the typed SystemSpec
+bin/main fmt --check examples/*.arch # canonical formatting (comments survive)
 bin/main generate examples/shop.arch # generate the runnable system into out/shop
-cargo test                           # parser + validation tests
+cargo test                           # parser + validation + formatter + codegen tests
 ```
 
 Generated systems follow the same repo shape as this one: a `nix/` env, a
@@ -72,13 +81,18 @@ against the `system.arch` snapshot of the previous run).
 
 ## Layout
 
-- `metaarch/` — the CLI (`check`, `dump`, `generate`)
+- `metaarch/` — the CLI (`check`, `dump`, `generate`, `fmt`)
 - `metaarch-spec/` — the typed `SystemSpec` + architectural validation
-- `metaarch-parser/` — lexer + recursive-descent parser for the `.arch` DSL
+- `metaarch-parser/` — lexer + recursive-descent parser for the `.arch` DSL,
+  plus the canonical formatter
 - `metaarch-codegen/` — quilt-based generators (`.rs.quilt` metaprograms)
+- `metaarch-lang/` / `metaarch-expand/` — arch as a dynamically registered
+  quilt language, and the workspace's own expander (`bin/expand`)
+- `metaarch-lsp/` / `tree-sitter-arch/` — editor support
+  ([docs](docs/wiki/lsp.md))
 - `docs/wiki/` — documentation and the build plan ([start here](docs/wiki/index.md))
 - `examples/` — sample `.arch` systems
-- `bin/` — `main` (CLI entrypoint), `expand` (re-expand `.quilt` sources)
+- `bin/` — `main` (demo tour / CLI), `demo`, `expand`, `grammar`
 - `nix/` — the direnv/flake development environment
 
 metaarch is a demo for quilt in the same spirit as

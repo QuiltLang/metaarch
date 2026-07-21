@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# The guided tour `bin/main` runs when called with no arguments: everything
+# one .arch file produces, end to end. Works from anywhere when the direnv
+# env is active; the fleet/smoke finale additionally wants `nix` (it boots
+# the generated system inside its own generated dev shell) and is skipped
+# politely without it.
+set -euo pipefail
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+cd "$ROOT"
+# The rejected-file step shows an error on purpose; keep it one line.
+export RUST_BACKTRACE=0
+
+say()  { printf '\n\033[1m━━ %s\033[0m\n\n' "$*"; }
+note() { printf '\033[2m%s\033[0m\n' "$*"; }
+run()  { printf '\033[36m$ %s\033[0m\n' "$*"; "$@"; }
+
+CLI=(cargo run -q --manifest-path "$ROOT/Cargo.toml" -p metaarch --)
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+note "metaarch — a distributed system compiler built on quilt."
+note "One .arch file in; services, contracts, SQL, tests, docs, shaders,"
+note "and a Nix deployment out. Building the CLI first…"
+cargo build -q -p metaarch
+
+say "1/6 · The source of truth: examples/shop.arch"
+cat examples/shop.arch
+
+say "2/6 · Broken architectures never generate"
+awk '{ gsub(/total: money/, "total: cash"); print }' examples/shop.arch > "$TMP/broken.arch"
+note "(same file with \`money\` misspelled as \`cash\` — a type outside the closed set)"
+if run "${CLI[@]}" check "$TMP/broken.arch"; then
+    echo "unexpected: check accepted a broken file" >&2
+    exit 1
+fi
+note "…rejected, with the line and column. The real file:"
+run "${CLI[@]}" check examples/shop.arch
+
+say "3/6 · metaarch fmt: one canonical style, comments survive"
+printf 'system messy\n# a comment that stays\nservice api{lang rust\n  port    9000\n emits Ping{at:timestamp}}\n' > "$TMP/messy.arch"
+cat "$TMP/messy.arch"
+run "${CLI[@]}" fmt "$TMP/messy.arch"
+note "…becomes:"
+cat "$TMP/messy.arch"
+
+say "4/6 · One generate, every artifact"
+run "${CLI[@]}" generate examples/shop.arch
+note ""
+note "$(find out/shop -type f -not -path '*/target/*' -not -path '*/.git/*' -not -path '*/.pgdata/*' | wc -l | tr -d ' ') files. The same event, in every language that touches it:"
+note ""
+note "── orders/src/events.rs (Rust, serde) ─────────────────────"
+grep -A4 "struct OrderPlaced" out/shop/orders/src/events.rs
+note ""
+note "── notifier/notifier/events.py (Python, dataclass) ────────"
+grep -A4 "class OrderPlaced" out/shop/notifier/notifier/events.py
+note ""
+note "── orders/sql/schema.sql (DDL from the db block) ──────────"
+head -9 out/shop/orders/sql/schema.sql | tail -7
+note ""
+note "── orders/analytics/orders.wgsl (GPU aggregation kernel) ──"
+sed -n '2,7p' out/shop/orders/analytics/orders.wgsl
+note ""
+note "Plus: typed peer clients, an HTTP event bus, bin/smoke, seeded"
+note "databases, docs/index.html with an SVG topology diagram, a Nix flake"
+note "with per-service builds + container images + NixOS modules."
+
+say "5/6 · Change one line, get a migration"
+cp examples/shop.arch "$TMP/v.arch"
+run "${CLI[@]}" generate "$TMP/v.arch" -o "$TMP/out" > /dev/null
+note "(generated once, then: add \`coupon_code: text\` to the orders table)"
+awk '{ print } /placed_at: timestamp,/ { print "      coupon_code: text," }' \
+    examples/shop.arch > "$TMP/v.arch"
+run "${CLI[@]}" generate "$TMP/v.arch" -o "$TMP/out" | grep "migrations"
+cat "$TMP/out/shop/orders/sql/migrations/0001.sql"
+
+say "6/6 · Boot the fleet, smoke-test every route"
+if command -v nix > /dev/null; then
+    note "Booting the generated system inside its own generated dev shell."
+    note "(first run compiles the generated workspace — takes a few minutes)"
+    (cd out/shop && run nix develop ./nix -c bin/smoke)
+else
+    note "nix not found — skipping the live boot. With nix installed this"
+    note "provisions postgres, boots all three services, and curls every"
+    note "derived route (health, peers, emit, deliver, inline impl): 9/9."
+fi
+
+say "That was one file"
+note "Everything above — three services in two languages, typed contracts,"
+note "SQL + migrations, GPU shaders, tests, docs, deployment — derives from"
+note "examples/shop.arch. Edit a line, re-run generate, and every artifact"
+note "moves together. More: docs/index.html in out/shop, docs/wiki/ here,"
+note "and editor support via metaarch-lsp (docs/wiki/lsp.md)."

@@ -230,7 +230,7 @@ quilt-lsp hook — logged in the decisions below.
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31, #33, #34, #36, and #37 as of 2026-07-19); new
+label (issues #1–#31, #33, #34, #36, #37, and #39 as of 2026-07-19); new
 decisions get both an entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -405,6 +405,14 @@ decisions get both an entry here and an issue.
   behind an upstream hook. The nvim injection query covers annotated
   fragments only (a query can't reach the sibling `lang` entry); un-annotated
   ones are covered by the LSP semantic tokens.
+- **Bare `bin/main` runs the demo tour** (2026-07-19): with no arguments the
+  entrypoint execs `bin/demo` — a six-act guided tour (source file → rejected
+  broken copy → fmt → generate with artifact highlights → one-line-change
+  migration diff → fleet boot + 9/9 smoke inside the generated dev shell);
+  any argument still reaches the CLI unchanged. The tour only exercises the
+  public commands (nothing demo-only in the CLI), works on out/shop so
+  repeat runs stay warm, does its mutation experiments in a mktemp dir, and
+  skips the live boot with an explanation when `nix` is absent.
 - **Analytics ships shaders, not a wgpu service** (2026-07-19): the WGSL
   stretch item emits `analytics/<table>.wgsl` files, and the generated
   systems stay wgpu-free — a GPU host would explode the closed dependency
