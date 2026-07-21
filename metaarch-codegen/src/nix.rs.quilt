@@ -143,8 +143,18 @@ fn root_flake(spec: &SystemSpec) -> String {
               runtimeInputs = builtins.attrValues services;
               text = ↙fleet_text.↑↘;
             };
+            images = builtins.listToAttrs (map
+              (name: {
+                name = name + "-image";
+                value = pkgs.dockerTools.buildLayeredImage {
+                  name = name;
+                  tag = "latest";
+                  config.Cmd = [ "${services.${name}}/bin/${name}" ];
+                };
+              })
+              (builtins.attrNames services));
           in {
-            packages = services // { fleet = fleet; default = fleet; };
+            packages = services // images // { fleet = fleet; default = fleet; };
             apps = builtins.mapAttrs
               (name: drv: { type = "app"; program = "${drv}/bin/${name}"; })
               (services // { fleet = fleet; })

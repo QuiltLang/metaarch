@@ -6,6 +6,7 @@
 
 # Generated from *.quilt by bin/expand (run bin/expand to create).
 /examples/hello.arch
+/metaarch-codegen/src/analytics.rs
 /metaarch-codegen/src/clients.rs
 /metaarch-codegen/src/db.rs
 /metaarch-codegen/src/docs.rs

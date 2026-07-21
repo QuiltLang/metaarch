@@ -206,19 +206,32 @@ quilt-lsp hook — logged in the decisions below.
 
 ## Stretch
 
-- WGSL analytics service: a generator that emits compute shaders specialized
-  to a table's schema (quilt's wgsl target) — GPU-accelerated aggregation
-  from the same `.arch` source
-- Architecture visualizer: generated HTML/SVG topology diagram
-- `metaarch fmt` for `.arch` files
-- Container images per service (`dockerTools.buildLayeredImage` in the root
-  flake) — the NixOS modules cover deployment for now
+- [x] WGSL analytics: `<svc>/analytics/<table>.wgsl` — a compute shader per
+      table specialized to its schema (quilt's wgsl target), aggregating the
+      numeric columns (sum for `int`/`money`, true-count for `bool`) with a
+      row-count, ready for any wgpu host to bind and dispatch. Emitted
+      shaders parse with quilt's wgsl grammar (asserted by test) and pass
+      full naga validation
+- [x] Architecture visualizer: `docs/topology.svg` — service boxes
+      (lang-accented), an arrow lane per event from emitter to every
+      consumer, a cylinder per database — generated beside the docs page
+      and inlined into its Topology section
+- [x] `metaarch fmt` for `.arch` files: `bin/main fmt [--check]` re-prints
+      a file in the canonical style (two-space indent, width-80 inline/block
+      field lists, trailing commas in block lists) while preserving comments,
+      blank-line groupings, and each fragment's block/inline spelling;
+      unparseable files are refused untouched
+- [x] Container images per service: `packages.<svc>-image` in the root
+      flake (`nix build .#orders-image` → a loadable `docker load` tarball
+      via `dockerTools.buildLayeredImage`, the service's closure as layers).
+      Like the NixOS modules they build on Linux; a darwin host wants a
+      linux builder
 
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31 as of 2026-07-19); new decisions get both an entry
-here and an issue.
+label (issues #1–#31, #33, #34, #36, and #37 as of 2026-07-19); new
+decisions get both an entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
   with a hand-rolled parser so the DSL ships without touching quilt;
@@ -392,6 +405,51 @@ here and an issue.
   behind an upstream hook. The nvim injection query covers annotated
   fragments only (a query can't reach the sibling `lang` entry); un-annotated
   ones are covered by the LSP semantic tokens.
+- **Analytics ships shaders, not a wgpu service** (2026-07-19): the WGSL
+  stretch item emits `analytics/<table>.wgsl` files, and the generated
+  systems stay wgpu-free — a GPU host would explode the closed dependency
+  set behind the vendored canonical `Cargo.lock`. The schema reaches the
+  shader through the wgsl target's covered splice positions only
+  (expressions, statements, heterogeneous lifts — struct members and
+  bindings are identifier positions with no tested splices): the buffer
+  layout is a fixed row-major `i32` array with a lifted `N_COLS`, column
+  selection (`int`/`money`/`bool`; `bool` as 0/1) specializes per table, and
+  the column→index mapping is a ground comment header. Sums are `i32` —
+  WGSL atomics have no 64-bit variant. Tables with no numeric columns get
+  no shader. The codegen tests parse every emitted shader with quilt's own
+  wgsl `Language` (the `wgsl` feature joins `parse`/`python`/`rust`), and
+  the shop's shader passes full naga validation.
+- **Container images are ground Nix in the root flake** (2026-07-19): the
+  `<svc>-image` packages are one static `builtins.listToAttrs (map …)` block
+  over the already-spliced `services` attrset — `dockerTools.buildLayeredImage`
+  with `config.Cmd = [ "${services.${name}}/bin/${name}" ]`, so the image
+  layers are exactly the service's closure (the python services' flake-source
+  store path rides along via the closure, nothing hand-listed). Zero new
+  splice positions: the whole block is ground Nix inside the existing quote,
+  keeping the three-splice-positions rule intact. Images build where Linux
+  derivations build — on darwin that means a linux builder, same as the
+  NixOS modules.
+- **`fmt` is the parser's grammar walk over a comment-keeping token stream**
+  (2026-07-19): the lexer now emits `#` comments as tokens (the parser
+  filters them out; the formatter is who asks for them), and `fmt.rs`
+  mirrors the parser function-for-function, re-printing tokens instead of
+  building a spec — so there is no third grammar and no CST to maintain, and
+  a `formatting_preserves_the_spec` test (span-stripped spec equality) keeps
+  the walk honest. `format` runs the real parser first, so fmt can never
+  mangle a file it doesn't understand. Field-list layout is fmt's to choose
+  (inline iff the line fits 80 columns); a fragment body's block/inline
+  spelling is the author's — it is foreign code, and the spec dedents it
+  anyway, which is also why re-indenting bodies is semantics-preserving.
+- **The topology diagram is plain-Rust SVG, standalone + inlined** (2026-07-19):
+  the visualizer builds its SVG as ground strings in `viz.rs` (the `sql.rs`
+  precedent), not as a quilt quote — every spec-driven value in an SVG lands
+  at *attribute* position (coordinates, sizes, the viewBox), and the html
+  target's covered splice position is text interiors (`raw_text`), per the
+  only-tested-positions rule the nix generator set. One `<svg>` element
+  serves both artifacts: written standalone as `docs/topology.svg` and
+  spliced into `docs/index.html`'s Topology section, so the page needs no
+  file fetch and the file needs no page. Layout is integer arithmetic over
+  declaration order — deterministic like every other artifact.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and

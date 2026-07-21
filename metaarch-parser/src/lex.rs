@@ -12,6 +12,9 @@ pub enum Tok {
     Path(String),
     /// A raw `↖ … ↗` code fragment, dedented (see [`dedent`]).
     Fragment(String),
+    /// A `#` comment's text (everything after the `#`). The parser drops
+    /// these; the formatter is who asks for them.
+    Comment(String),
     Colon,
     Comma,
     LBrace,
@@ -28,6 +31,7 @@ impl std::fmt::Display for Tok {
             Tok::Int(n) => write!(f, "`{n}`"),
             Tok::Path(path) => write!(f, "`{path}`"),
             Tok::Fragment(_) => write!(f, "a `↖ … ↗` fragment"),
+            Tok::Comment(_) => write!(f, "a comment"),
             Tok::Colon => write!(f, "`:`"),
             Tok::Comma => write!(f, "`,`"),
             Tok::LBrace => write!(f, "`{{`"),
@@ -77,6 +81,10 @@ fn dedent(text: &str) -> String {
 pub struct Token {
     pub tok: Tok,
     pub span: Span,
+    /// The line the token ends on — the span line except for multi-line
+    /// fragments. The formatter uses it to tell trailing comments and blank
+    /// lines apart; the parser ignores it.
+    pub end_line: u32,
 }
 
 pub struct Lexer<'a> {
@@ -108,22 +116,13 @@ impl<'a> Lexer<'a> {
     pub fn lex(mut self) -> Result<Vec<Token>, ParseError> {
         let mut tokens = Vec::new();
         loop {
-            // Skip whitespace and comments.
-            match self.chars.peek() {
-                Some(c) if c.is_whitespace() => {
+            // Skip whitespace; comments become tokens (the parser filters
+            // them out, the formatter keeps them).
+            if let Some(c) = self.chars.peek() {
+                if c.is_whitespace() {
                     self.bump();
                     continue;
                 }
-                Some('#') => {
-                    while let Some(&c) = self.chars.peek() {
-                        if c == '\n' {
-                            break;
-                        }
-                        self.bump();
-                    }
-                    continue;
-                }
-                _ => {}
             }
 
             let span = Span {
@@ -134,11 +133,23 @@ impl<'a> Lexer<'a> {
                 tokens.push(Token {
                     tok: Tok::Eof,
                     span,
+                    end_line: self.line,
                 });
                 return Ok(tokens);
             };
 
             let tok = match c {
+                '#' => {
+                    let mut text = String::new();
+                    while let Some(&c) = self.chars.peek() {
+                        if c == '\n' {
+                            break;
+                        }
+                        text.push(c);
+                        self.bump();
+                    }
+                    Tok::Comment(text)
+                }
                 '/' => {
                     let mut path = String::from('/');
                     while let Some(&d) = self.chars.peek() {
@@ -221,7 +232,11 @@ impl<'a> Lexer<'a> {
                     });
                 }
             };
-            tokens.push(Token { tok, span });
+            tokens.push(Token {
+                tok,
+                span,
+                end_line: self.line,
+            });
         }
     }
 }

@@ -1,0 +1,188 @@
+//! Generator for `<svc>/analytics/<table>.wgsl`: one compute shader per
+//! table, specialized to its schema — GPU-side aggregation over the table's
+//! numeric columns from the same `.arch` source (quilt's wgsl target).
+//!
+//! This is the `.rs.quilt` source for the generated `analytics.rs`; run
+//! `bin/expand` after editing it, before `cargo build`.
+//!
+//! The shader skeleton is a `wgsl↖…↗` quote; the schema arrives through the
+//! covered splice positions only (here: a heterogeneous lift for the column
+//! count — struct members and bindings are identifier positions, which the
+//! wgsl target has no tested splices for, so the buffer layout is fixed and
+//! the column mapping is a ground comment header instead):
+//!
+//! - `data` is a row-major `i32` buffer, `N_COLS` values per row, in the
+//!   column order the header comment lists: `int` and `money` (minor units)
+//!   as-is, `bool` as 0/1. Non-numeric columns (uuid, text, timestamp,
+//!   enum) don't aggregate and aren't uploaded.
+//! - `agg` collects a row count plus one atomic per-column sum (a `bool`
+//!   column's sum is its true-count). Sums are `i32` — WGSL atomics have no
+//!   64-bit variant; wide datasets would shard into hi/lo pairs.
+//!
+//! Any wgpu host can bind the two buffers and dispatch
+//! `ceil(rows / 64)` workgroups; the generated systems stay wgpu-free (see
+//! the decisions log — a GPU runtime would break the closed dependency
+//! set).
+
+use metaarch_spec::{Database, Field, Service, SystemSpec, Table, Ty};
+use quilt::prelude::*;
+
+use crate::{header, ty_arch, Artifact};
+
+/// The columns a shader aggregates: `int` and `money` sum directly, `bool`
+/// counts its true rows. Everything else stays CPU-side.
+fn numeric_columns(table: &Table) -> Vec<&Field> {
+    table
+        .fields
+        .iter()
+        .filter(|f| matches!(f.ty, Ty::Int | Ty::Money | Ty::Bool))
+        .collect()
+}
+
+/// One shader per table that has something to aggregate.
+pub(crate) fn artifacts(spec: &SystemSpec, service: &Service, db: &Database) -> Vec<Artifact> {
+    db.tables
+        .iter()
+        .filter(|table| !numeric_columns(table).is_empty())
+        .map(|table| {
+            Artifact::file(
+                format!("{}/analytics/{}.wgsl", service.name, table.name),
+                shader(spec, table),
+            )
+        })
+        .collect()
+}
+
+fn shader(spec: &SystemSpec, table: &Table) -> String {
+    let columns = numeric_columns(table);
+    let n_cols = columns.len() as u32;
+
+    let module = wgsl↖
+        const N_COLS: u32 = ↙n_cols.↑↘;
+
+        struct Agg {
+            count: atomic<u32>,
+            sums: array<atomic<i32>, N_COLS>,
+        }
+
+        @group(0) @binding(0) var<storage, read> data: array<i32>;
+        @group(0) @binding(1) var<storage, read_write> agg: Agg;
+
+        @compute @workgroup_size(64)
+        fn aggregate(@builtin(global_invocation_id) gid: vec3<u32>) {
+            let row = gid.x;
+            if (row >= arrayLength(&data) / N_COLS) {
+                return;
+            }
+            atomicAdd(&agg.count, 1u);
+            for (var c: u32 = 0u; c < N_COLS; c = c + 1u) {
+                atomicAdd(&agg.sums[c], data[row * N_COLS + c]);
+            }
+        }
+    ↗;
+
+    let mut out = format!("{}\n", header(&spec.name, "//"));
+    let _ = std::fmt::Write::write_fmt(
+        &mut out,
+        format_args!(
+            "//\n// Aggregation kernel for table `{}`: bind `data` as a row-major i32\n// buffer ({} value(s) per row, order below), dispatch ceil(rows / 64)\n// workgroups, read back `agg`.\n//\n",
+            table.name, n_cols
+        ),
+    );
+    for (index, field) in columns.iter().enumerate() {
+        let semantics = match field.ty {
+            Ty::Bool => "0/1; sum = true-count",
+            _ => "sum",
+        };
+        let _ = std::fmt::Write::write_fmt(
+            &mut out,
+            format_args!(
+                "// column {index}: {} ({}) — {semantics}\n",
+                field.name,
+                ty_arch(&field.ty),
+            ),
+        );
+    }
+    out.push('\n');
+    out.push_str(module.coparse().trim_start_matches('\n'));
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metaarch_spec::Span;
+    use quilt::lang::{flat_nodes, Language};
+    use quilt::langs::wgsl::lang::WgslLanguage;
+
+    fn zero() -> Span {
+        Span { line: 0, col: 0 }
+    }
+
+    fn table() -> Table {
+        let field = |name: &str, ty: Ty| Field {
+            name: name.into(),
+            ty,
+            pk: false,
+            span: zero(),
+        };
+        Table {
+            name: "orders".into(),
+            fields: vec![
+                field("id", Ty::Uuid),
+                field("total", Ty::Money),
+                field("paid", Ty::Bool),
+                field("note", Ty::Text),
+            ],
+            span: zero(),
+        }
+    }
+
+    fn spec() -> SystemSpec {
+        SystemSpec {
+            name: "t".into(),
+            services: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn shader_is_specialized_to_the_numeric_columns() {
+        let out = shader(&spec(), &table());
+        assert!(out.contains("const N_COLS: u32 = 2"), "{out}");
+        assert!(out.contains("// column 0: total (money) — sum"), "{out}");
+        assert!(out.contains("// column 1: paid (bool) — 0/1; sum = true-count"), "{out}");
+        assert!(
+            !out.contains("column 2") && !out.contains(": id ("),
+            "non-numeric column leaked into the mapping:\n{out}"
+        );
+    }
+
+    #[test]
+    fn shader_parses_with_quilts_wgsl_grammar() {
+        let out = shader(&spec(), &table());
+        let nodes = flat_nodes(&out);
+        WgslLanguage::default().parse(&nodes).unwrap();
+    }
+
+    #[test]
+    fn tables_without_numeric_columns_get_no_shader() {
+        let mut table = table();
+        table.fields.retain(|f| matches!(f.ty, Ty::Uuid | Ty::Text));
+        let service = Service {
+            name: "s".into(),
+            lang: None,
+            port: None,
+            db: None,
+            emits: Vec::new(),
+            consumes: Vec::new(),
+            impls: Vec::new(),
+            span: zero(),
+        };
+        let db = Database {
+            engine: metaarch_spec::Engine::Sqlite,
+            tables: vec![table],
+            span: zero(),
+        };
+        assert!(artifacts(&spec(), &service, &db).is_empty());
+    }
+}
