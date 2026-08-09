@@ -226,11 +226,19 @@ quilt-lsp hook — logged in the decisions below.
       via `dockerTools.buildLayeredImage`, the service's closure as layers).
       Like the NixOS modules they build on Linux; a darwin host wants a
       linux builder
+- [x] **process-compose instead of containers** (#41): a generated
+      `process-compose.yaml` — one process per service (`cargo run` /
+      `python3 -m`), the `bin/db up` and `cargo build` one-shots they
+      `depends_on`, an HTTP readiness probe on each service's `/health`, and
+      restart-on-failure. `bin/main --process-compose` runs it; `nix run
+      .#fleet-pc` runs the same fleet over the *built* services from a
+      `builtins.toJSON` config in the store. `pkgs.process-compose` joins
+      the dev shell
 
 ## Decisions log
 
 Every decision here is also filed as a GitHub issue with the `decision`
-label (issues #1–#31, #33, #34, #36, #37, and #39 as of 2026-07-19); new
+label (issues #1–#31, #33, #34, #36, #37, #39 and #41 as of 2026-08-09); new
 decisions get both an entry here and an issue.
 
 - **Standalone parser first, quilt `Language` later** (2026-07-18): start
@@ -458,6 +466,25 @@ decisions get both an entry here and an issue.
   spliced into `docs/index.html`'s Topology section, so the page needs no
   file fetch and the file needs no page. Layout is integer arithmetic over
   declaration order — deterministic like every other artifact.
+- **process-compose is a fourth runner, not a replacement** (2026-08-09,
+  #41): `process-compose.yaml` is plain text in `process_compose.rs` (no
+  quilt YAML grammar — the `sql.rs` precedent), and `bin/main` reaches it
+  only behind `--process-compose`, so the default boot path keeps needing
+  nothing but bash. Three things were decided against: (a) the event
+  topology does **not** become `depends_on` edges — nothing in validation
+  forbids two services consuming each other's events, and a cycle would
+  deadlock `process-compose up` on a system `check` accepts, so only the
+  `bin/db up` / `cargo build` one-shots are dependencies and readiness
+  probes carry the health story; (b) process-compose's REST API is put on a
+  unix socket (`-U`), because its TCP default is `:8080` — a port a
+  generated service may itself want (the shop's gateway does) — and the
+  socket path is pinned by the `.envrc` (`PC_SOCKET_PATH`), since
+  process-compose otherwise names it after the *calling* process and a
+  second terminal cannot reach the fleet; (c) the store-path runner
+  (`nix run .#fleet-pc`) reuses the probe/restart constants from
+  `process_compose.rs` rather than restating them, and its config is
+  `builtins.toJSON` of a ground-Nix attrset — JSON is YAML, so no YAML is
+  spelled in Nix and the three-splice-positions rule holds.
 - **`bin/db` provisions fresh, migrations stay manual** (2026-07-19):
   `bin/db up` applies schema + seed only when it creates the database;
   migrations under `sql/migrations/` target *pre-existing* databases and

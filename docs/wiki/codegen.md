@@ -53,8 +53,8 @@ Lessons (phases 1–2) about where quotes stop and builders start:
   position is ever spliced. Multi-line shell text inside Nix is built as a
   ground Rust string and lifted whole (`\n` escapes in the emitted literal).
 
-SQL and the config files (TOML, `.envrc`, README) are plain text built in
-ordinary Rust — quilt has no grammar for them yet. The migrations and seed
+SQL and the config files (TOML, YAML, `.envrc`, README) are plain text built
+in ordinary Rust — quilt has no grammar for them yet. The migrations and seed
 generators are plain text too, sharing the DDL spelling (`column_def`,
 `create_table`) with the schema generator so an `ALTER` adds a column
 spelled exactly as a fresh `CREATE` would.
@@ -74,17 +74,22 @@ out/shop/
 ├── Cargo.lock              # GENERATED from the vendored canonical lock:
 │                           #   pinned deps, valid for every generated system
 ├── flake.nix               # GENERATED Nix (root): per-service package
-│                           #   builds, nix run apps, fleet app, NixOS modules
+│                           #   builds, nix run apps, fleet + fleet-pc apps,
+│                           #   NixOS modules
+├── process-compose.yaml    # GENERATED: the fleet as a process-compose
+│                           #   project — bin/main --process-compose
 ├── system.arch             # byte-identical copy of the source .arch:
 │                           #   provenance + the migration diff base
 ├── nix/
 │   ├── flake.nix           # GENERATED Nix: dev shell — toolchains, db
-│   │                       #   engines, curl (what the .envrc loads)
+│   │                       #   engines, curl, process-compose (the .envrc
+│   │                       #   loads this one)
 │   └── modules/            # GENERATED NixOS module per service:
 │                           #   services.<system>.<svc>.enable → systemd unit
 ├── bin/
 │   ├── main                # GENERATED bash: provisions dbs, builds, boots
-│   │                       #   the whole fleet, kills it together
+│   │                       #   the whole fleet, kills it together — or hands
+│   │                       #   it to process-compose (--process-compose)
 │   ├── db                  # GENERATED bash: postgres initdb/start (unix
 │   │                       #   socket under .pgdata/) + schema/seed apply
 │   └── smoke               # GENERATED end-to-end test: boots the fleet,
@@ -124,20 +129,42 @@ sources inside the flake's own directory, so the buildable packages live at
 the root while the dev shell stays at `nix/flake.nix` (initialize git in a
 generated system before `nix build` so the source copy filters `target/`).
 
+## Running the fleet
+
+Three runners, one topology, all derived from the same spec:
+
+| runner | what it runs | supervision |
+|---|---|---|
+| `bin/main` | the source tree (`cargo run`, `python3 -m`) | `trap 'kill 0' EXIT` |
+| `bin/main --process-compose` | the source tree, via `process-compose.yaml` | ordering, readiness probes, restart policy, TUI |
+| `nix run` / `nix run .#fleet-pc` | the *built* services from the store | `kill 0` / process-compose |
+
+`process-compose.yaml` gives each service an HTTP readiness probe on the
+`/health` route the spec already derives, and puts the two things `bin/main`
+does before booting — `bin/db up`, `cargo build` — in the graph as one-shots
+the services `depend_on` with `process_completed_successfully`. The event
+topology is deliberately *not* in that graph: two services may legally
+consume each other's events, and a cycle would deadlock `process-compose up`
+on a system `metaarch check` accepts.
+
+Containers are the fourth option and the one that needs a Linux builder
+(`nix build .#<svc>-image`). process-compose covers the same ground —
+declared dependencies, health, restarts, one log stream — without them.
+
 ## Artifact map (target state)
 
 | `.arch` construct | generates |
 |---|---|
 | `service` + `lang rust` | axum crate: routes, health + peers endpoints, typed peer clients |
 | `service` + `lang python` | python package: consumer loop, typed handlers |
-| `port` | bind config, `bin/main` orchestration entry, smoke-test URL |
+| `port` | bind config, `bin/main` orchestration entry, smoke-test URL, process-compose readiness probe |
 | `db` block | `sql/schema.sql` + `sql/seed.sql` (per engine), `sql/migrations/` diffs, db provisioning in `nix/` (phase 3), `analytics/<table>.wgsl` compute shaders |
 | `table` | DDL + seed rows + migration steps; Rust structs + query helpers (phase 4) |
 | `emits E { ... }` | Rust struct / Python dataclass for `E`, client `emit_e` method, emit route, smoke check, docs entry |
 | `consumes E` | delivery route + typed handler, client `deliver_e` method, smoke check |
 | `impl get /x rust↖…↗` | route + handler with the parsed inline fragment as its body, smoke check, docs row |
-| whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `docs/index.html`, `docs/topology.svg`, README, `system.arch` snapshot |
-| each service, in the root flake | `packages.<svc>` build, `nix run` app, `nixosModules.<svc>`, `packages.<svc>-image` container image |
+| whole system | `nix/flake.nix`, `bin/main`, `bin/smoke`, `process-compose.yaml`, `docs/index.html`, `docs/topology.svg`, README, `system.arch` snapshot |
+| each service, in the root flake | `packages.<svc>` build, `nix run` app, `nixosModules.<svc>`, `packages.<svc>-image` container image, a `fleet-pc` process |
 
 ## Event transport (MVP)
 

@@ -1,7 +1,8 @@
 //! Nix deployment artifacts, emitted as *generated Nix* (quilt's nix target):
-//! the root `flake.nix` (per-service package builds, `nix run` apps, a fleet
-//! orchestrator app, and per-service NixOS modules), the `nix/flake.nix` dev
-//! shell the `.envrc` loads, and one `nix/modules/<service>.nix` per service.
+//! the root `flake.nix` (per-service package builds, `nix run` apps, two
+//! fleet orchestrator apps — bare `fleet` and process-compose'd `fleet-pc` —
+//! and per-service NixOS modules), the `nix/flake.nix` dev shell the `.envrc`
+//! loads, and one `nix/modules/<service>.nix` per service.
 //!
 //! The generated Nix leans on three spliceable positions quilt's nix target
 //! supports: expression values, lifted strings, and variadic list interiors.
@@ -51,6 +52,9 @@ fn dev_packages(spec: &SystemSpec) -> Vec<⟨T⟩> {
         packages.push(nix↖pkgs.sqlite↗);
     }
     packages.push(nix↖pkgs.curl↗);
+    // What `bin/main --process-compose` runs; the generated
+    // `process-compose.yaml` is useless without it on PATH.
+    packages.push(nix↖pkgs.process-compose↗);
     packages
 }
 
@@ -61,9 +65,11 @@ fn has_engine(spec: &SystemSpec, engine: Engine) -> bool {
 }
 
 /// The root flake: one buildable package per service (`nix build .#orders`),
-/// a `fleet` orchestrator app that boots every built service, and the NixOS
-/// modules. Initialize git in the generated system before using it — flake
-/// evaluation copies the source tree, and only a git tree filters `target/`.
+/// a `fleet` orchestrator app that boots every built service, a `fleet-pc`
+/// app that boots the same set under process-compose (readiness probes and a
+/// restart policy instead of `kill 0`), and the NixOS modules. Initialize git
+/// in the generated system before using it — flake evaluation copies the
+/// source tree, and only a git tree filters `target/`.
 fn root_flake(spec: &SystemSpec) -> String {
     let desc = format!(
         "The generated `{}` system: per-service builds, fleet app, NixOS modules",
@@ -107,6 +113,50 @@ fn root_flake(spec: &SystemSpec) -> String {
     }
     fleet_text.push_str("wait\n");
 
+    // `process-compose` entries for the `fleet-pc` app: the same fleet as
+    // `fleet`, supervised. Commands are bare service names — every package is
+    // on PATH via `runtimeInputs`, exactly as the `fleet` script assumes — so
+    // no store path is spliced. The tuning comes from `process_compose.rs`,
+    // which spells this fleet a second time over the source tree.
+    let delay = crate::process_compose::PROBE_INITIAL_DELAY_SECONDS;
+    let period = crate::process_compose::PROBE_PERIOD_SECONDS;
+    let timeout = crate::process_compose::PROBE_TIMEOUT_SECONDS;
+    let successes = crate::process_compose::PROBE_SUCCESS_THRESHOLD;
+    let failures = crate::process_compose::PROBE_FAILURE_THRESHOLD;
+    let restart = crate::process_compose::RESTART_POLICY.to_string();
+    let backoff = crate::process_compose::RESTART_BACKOFF_SECONDS;
+    let max_restarts = crate::process_compose::MAX_RESTARTS;
+    let pc_version = crate::process_compose::VERSION.to_string();
+    let mut pc_entries: Vec<⟨T⟩> = Vec::new();
+    for (index, service) in spec.services.iter().enumerate() {
+        let name = service.name.clone();
+        let port = crate::service_port(service, index);
+        pc_entries.push(nix↖{
+            name = ↙name.↑↘;
+            value = {
+              command = ↙name.↑↘;
+              readiness_probe = {
+                http_get = {
+                  host = "127.0.0.1";
+                  scheme = "http";
+                  path = "/health";
+                  port = ↙port.↑↘;
+                };
+                initial_delay_seconds = ↙delay.↑↘;
+                period_seconds = ↙period.↑↘;
+                timeout_seconds = ↙timeout.↑↘;
+                success_threshold = ↙successes.↑↘;
+                failure_threshold = ↙failures.↑↘;
+              };
+              availability = {
+                restart = ↙restart.↑↘;
+                backoff_seconds = ↙backoff.↑↘;
+                max_restarts = ↙max_restarts.↑↘;
+              };
+            };
+          }↗);
+    }
+
     // nixosModules entries; each module file takes `self` first.
     let mut module_entries: Vec<⟨T⟩> = Vec::new();
     for service in &spec.services {
@@ -143,6 +193,22 @@ fn root_flake(spec: &SystemSpec) -> String {
               runtimeInputs = builtins.attrValues services;
               text = ↙fleet_text.↑↘;
             };
+            pcConfig = pkgs.writeText "process-compose.yaml" (builtins.toJSON {
+              version = ↙pc_version.↑↘;
+              processes = builtins.listToAttrs [
+                ↙{
+                    for entry in pc_entries {
+                        entry.←;
+                        NL.←;
+                    }
+                }↘
+              ];
+            });
+            fleetPc = pkgs.writeShellApplication {
+              name = "fleet-pc";
+              runtimeInputs = [ pkgs.process-compose ] ++ builtins.attrValues services;
+              text = "exec process-compose -U -f ${pcConfig} up \"$@\"";
+            };
             images = builtins.listToAttrs (map
               (name: {
                 name = name + "-image";
@@ -154,10 +220,10 @@ fn root_flake(spec: &SystemSpec) -> String {
               })
               (builtins.attrNames services));
           in {
-            packages = services // images // { fleet = fleet; default = fleet; };
+            packages = services // images // { fleet = fleet; fleet-pc = fleetPc; default = fleet; };
             apps = builtins.mapAttrs
               (name: drv: { type = "app"; program = "${drv}/bin/${name}"; })
-              (services // { fleet = fleet; })
+              (services // { fleet = fleet; fleet-pc = fleetPc; })
               // { default = { type = "app"; program = "${fleet}/bin/fleet"; }; };
             devShells.default = pkgs.mkShell {
               packages = [ ↙{

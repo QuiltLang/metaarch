@@ -62,7 +62,8 @@ sed -n '2,7p' out/shop/orders/analytics/orders.wgsl
 note ""
 note "Plus: typed peer clients, an HTTP event bus, bin/smoke, seeded"
 note "databases, docs/index.html with an SVG topology diagram, a Nix flake"
-note "with per-service builds + container images + NixOS modules."
+note "with per-service builds + container images + NixOS modules, and a"
+note "process-compose project (bin/main --process-compose) for the fleet."
 
 say "5/6 · Change one line, get a migration"
 cp examples/shop.arch "$TMP/v.arch"
