@@ -14,6 +14,7 @@ use metaarch_spec::{Engine, EventType, Lang, Service, SystemSpec, Ty};
 mod cargo_lock;
 mod fragment;
 mod migrations;
+mod process_compose;
 mod seed;
 mod sql;
 mod viz;
@@ -86,6 +87,7 @@ pub fn generate(spec: &SystemSpec) -> Vec<Artifact> {
     if let Some(script) = db::bin_db(spec) {
         artifacts.push(Artifact::script("bin/db", script));
     }
+    artifacts.push(process_compose::process_compose(spec));
     artifacts.push(Artifact::script("bin/smoke", smoke::bin_smoke(spec)));
     artifacts.push(Artifact::file("docs/index.html", docs::index_html(spec)));
     artifacts.push(Artifact::file("docs/topology.svg", viz::topology_svg_file(spec)));

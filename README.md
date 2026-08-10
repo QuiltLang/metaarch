@@ -60,7 +60,11 @@ a root `flake.nix` that builds every service (`nix build .#orders`), runs
 the fleet from the store (`nix run`), and exports a NixOS module per
 service. `bin/main` provisions the declared databases first (`bin/db up`:
 postgres under `.pgdata/`, schema + seed applied on creation; run inside the
-generated dev shell so the db tools are on PATH). Try the shop:
+generated dev shell so the db tools are on PATH). The same fleet also comes
+as a [process-compose](https://f1bonacc1.github.io/process-compose/) project
+— `bin/main --process-compose`, or `nix run .#fleet-pc` over the built
+services: dependency ordering, `/health` readiness probes and a restart
+policy, no containers involved. Try the shop:
 
 ```sh
 cd out/shop && bin/main &            # build + boot gateway, orders, notifier
@@ -72,6 +76,7 @@ curl http://127.0.0.1:8080/health    # gateway liveness
 curl http://127.0.0.1:8080/peers     # fleet health, via the typed rust clients
 bin/smoke                            # end-to-end: every route, every event path
 open docs/index.html                 # generated API + event reference
+bin/main --process-compose           # …or the same fleet, supervised
 ```
 
 Change a field in `examples/shop.arch` and regenerate: the diff touches the
