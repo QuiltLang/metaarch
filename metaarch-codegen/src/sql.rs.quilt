@@ -1,0 +1,321 @@
+//! DDL generator: one `sql/schema.sql` per `db` block.
+//!
+//! A quilt metaprogram against the SQL target (QuiltLang/quilt#219): every
+//! statement in the file is a `sql↖…↗` quote, so the DDL leaves here as a
+//! parsed tree rather than as assembled text, and the spec's names, types and
+//! enum variants cross into it through holes and lifts. The file body is one
+//! script quote whose statements arrive through a *statement*-position hole
+//! (quilt#234) — a position no bare identifier can occupy, so the separators
+//! between them are this loop's job and the source's own `;` terminates the
+//! last one.
+//!
+//! This is the `.rs.quilt` source for the generated `sql.rs`; run `bin/expand`
+//! after editing it, before `cargo build`.
+//!
+//! Two positions this grammar gives no hole, and what stands in for them:
+//!
+//! - **a column definition on its own.** SQL's `program` holds statements, so
+//!   a definition has no place in the grammar alone — the same reason a bare
+//!   expression has none. Each one is written inside a throwaway one-column
+//!   `CREATE TABLE` and lifted back out by [`only_column`]: the wrap-and-strip
+//!   trick `SqlLanguage::parse_pre` uses for expressions, one level up.
+//! - **the `column_definitions` list interior.** It is variadic, but its
+//!   elements are not identifiers, so a hole there parses as a column *name*
+//!   and leaves the type MISSING. The list is assembled with the term builders
+//!   — the same only-tested-positions rule the nix and rust generators follow
+//!   — and its elements all still come from quotes. The file's indentation
+//!   lives there too, as layout rather than as `\n  ` in a format string.
+//!
+//! `column_def` and `create_table` are shared with the migrations generator,
+//! so a column added by an `ALTER` is spelled exactly as it would be in a
+//! fresh schema.
+
+#![allow(clippy::unit_arg)]
+
+use metaarch_spec::{Database, Engine, Field, Service, SystemSpec, Table, Ty};
+use quilt::prelude::*;
+
+use crate::{header, Artifact};
+
+/// The children of a term the SQL grammar built.
+fn terms_of(term: &⟨T⟩) -> &[⟨T⟩] {
+    match &**term {
+        QTerm::Tuple { terms, .. } => terms,
+        _ => unreachable!("a parsed sql fragment is a tuple term"),
+    }
+}
+
+/// The one `column_definition` inside a single-column `CREATE TABLE` quote.
+///
+/// The shape is `statement → create_table → column_definitions → ( def )`,
+/// with the column list always the last child of `create_table`; the
+/// round-trip test below is what holds that claim to the grammar.
+fn only_column(statement: &⟨T⟩) -> ⟨T⟩ {
+    let create = &terms_of(statement)[0];
+    let list = terms_of(create)
+        .last()
+        .expect("create_table ends with its column list");
+    terms_of(list)[1].clone()
+}
+
+/// SQL column type per engine, as the node the grammar builds for that
+/// spelling. Taken from a parsed quote rather than written out by hand
+/// because the shapes are not uniform — `BIGINT` and `INTEGER` nest a keyword
+/// under a type node where `TEXT` and `UUID` are bare keywords, and a lift
+/// that emits the right text with the wrong shape passes every text-level
+/// test.
+///
+/// Enums become TEXT plus the CHECK [`column_def`] adds; sqlite stores bools
+/// as INTEGER and timestamps as TEXT.
+pub(crate) fn sql_ty(ty: &Ty, engine: Engine) -> ⟨T⟩ {
+    let one = match (ty, engine) {
+        (Ty::Uuid, Engine::Postgres) => sql↖CREATE TABLE t (c UUID)↗,
+        (Ty::Int | Ty::Money, Engine::Postgres) => sql↖CREATE TABLE t (c BIGINT)↗,
+        (Ty::Int | Ty::Money, Engine::Sqlite) => sql↖CREATE TABLE t (c INTEGER)↗,
+        (Ty::Bool, Engine::Postgres) => sql↖CREATE TABLE t (c BOOLEAN)↗,
+        (Ty::Bool, Engine::Sqlite) => sql↖CREATE TABLE t (c INTEGER)↗,
+        (Ty::Timestamp, Engine::Postgres) => sql↖CREATE TABLE t (c TIMESTAMPTZ)↗,
+        // uuid, text, enum and timestamp all land on TEXT in sqlite.
+        (Ty::Uuid | Ty::Text | Ty::Enum(_) | Ty::Timestamp, _) => sql↖CREATE TABLE t (c TEXT)↗,
+    };
+    terms_of(&only_column(&one))[1].clone()
+}
+
+/// An `enum` field's variants, each lifted into the SQL target — so the
+/// quoting is the target's own rule rather than a `'{v}'` written here, and a
+/// variant holding an apostrophe comes out as one literal token instead of
+/// ending the statement early. Shared with the migrations generator, which
+/// spells the same CHECK inside an `ADD COLUMN`.
+pub(crate) fn variant_literals(variants: &[String]) -> Vec<⟨T⟩> {
+    variants
+        .iter()
+        .map(|variant| variant.as_str().qlift_to::<Sql>())
+        .collect()
+}
+
+/// One column definition as it appears in `CREATE TABLE`.
+pub(crate) fn column_def(field: &Field, engine: Engine) -> ⟨T⟩ {
+    let name = leaf("identifier", &field.name);
+    let ty = sql_ty(&field.ty, engine);
+    // Each branch binds its quote and returns the binding: a *statement*
+    // quote left in tail position is the shape the expander reads as "emit me
+    // into the enclosing builder" (`is_stmt_like` in `multi.rs`), which is
+    // right in an emit loop and wrong for a value.
+    let one = if field.pk {
+        let one = sql↖CREATE TABLE t (↙name↘ ↙ty↘ PRIMARY KEY)↗;
+        one
+    } else if let Ty::Enum(variants) = &field.ty {
+        // The closed type set maps `enum` onto TEXT plus a CHECK, the
+        // spelling both engines accept.
+        let literals = variant_literals(variants);
+        let one = sql↖CREATE TABLE t (↙name↘ ↙ty↘ NOT NULL CHECK (↙name↘ IN (↙{
+            for (index, literal) in literals.into_iter().enumerate() {
+                if index > 0 {
+                    sym(",").←;
+                    " ".←;
+                }
+                literal.←;
+            }
+        }↘)))↗;
+        one
+    } else {
+        let one = sql↖CREATE TABLE t (↙name↘ ↙ty↘ NOT NULL)↗;
+        one
+    };
+    only_column(&one)
+}
+
+/// The `column_definitions` list, and with it the DDL's layout: one column
+/// per line, indented, closing paren back at the margin.
+fn column_definitions(defs: &[⟨T⟩]) -> ⟨T⟩ {
+    let mut list = tb("column_definitions").c(&sym("(")).p("  ").n();
+    for (index, def) in defs.iter().enumerate() {
+        if index > 0 {
+            list = list.c(&sym(",")).n();
+        }
+        list = list.c(def);
+    }
+    list.x().n().c(&sym(")")).b()
+}
+
+/// A full `CREATE TABLE` statement for one table.
+pub(crate) fn create_table(table: &Table, engine: Engine) -> ⟨T⟩ {
+    let defs: Vec<⟨T⟩> = table
+        .fields
+        .iter()
+        .map(|field| column_def(field, engine))
+        .collect();
+    let statement = tb("create_table")
+        .c(&leaf("keyword_create", "CREATE"))
+        .w(" ")
+        .c(&leaf("keyword_table", "TABLE"))
+        .w(" ")
+        .c(&table_ref(&table.name))
+        .w(" ")
+        .c(&column_definitions(&defs))
+        .b();
+    tb("statement").c(&statement).b()
+}
+
+/// A table named by the spec, in the `object_reference` position `CREATE`,
+/// `ALTER` and `DROP` all take it in — an identifier position, so a term
+/// rather than a hole.
+pub(crate) fn table_ref(name: &str) -> ⟨T⟩ {
+    tb("object_reference").c(&leaf("identifier", name)).b()
+}
+
+/// How a script separates its statements.
+pub(crate) enum Spacing {
+    /// One statement per line — a list of rows or of migration steps.
+    Tight,
+    /// A blank line between statements, for when each one is a whole table.
+    Loose,
+}
+
+/// A `;`-terminated script of SQL statements.
+///
+/// The statements go into a *statement*-position hole (quilt#234) — a
+/// position no bare identifier can occupy, so the wrapper trick is what makes
+/// it a hole at all. The separators are placed here and the source's own `;`
+/// terminates the last one; emitting bare statements with a single trailing
+/// `;` would run them together.
+pub(crate) fn script(statements: Vec<⟨T⟩>, spacing: Spacing) -> String {
+    let body = sql↖
+        ↙{
+            for (index, statement) in statements.into_iter().enumerate() {
+                if index > 0 {
+                    sym(";").←;
+                    NL.←;
+                    if matches!(spacing, Spacing::Loose) {
+                        NL.←;
+                    }
+                }
+                statement.←;
+            }
+        }↘;
+    ↗;
+    body.coparse().trim_start_matches('\n').to_string()
+}
+
+pub(crate) fn engine_name(engine: Engine) -> &'static str {
+    match engine {
+        Engine::Postgres => "postgres",
+        Engine::Sqlite => "sqlite",
+    }
+}
+
+pub(crate) fn schema(spec: &SystemSpec, service: &Service, db: &Database) -> Artifact {
+    let statements = db
+        .tables
+        .iter()
+        .map(|table| create_table(table, db.engine))
+        .collect();
+    let contents = format!(
+        "{}\n-- Schema for service `{}` ({}).\n\n{}",
+        header(&spec.name, "--"),
+        service.name,
+        engine_name(db.engine),
+        script(statements, Spacing::Loose),
+    );
+    Artifact::file(format!("{}/sql/schema.sql", service.name), contents)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use metaarch_spec::Span;
+    use quilt::lang::{flat_nodes, Language};
+    use quilt::langs::sql::lang::SqlLanguage;
+
+    fn zero() -> Span {
+        Span { line: 0, col: 0 }
+    }
+
+    pub(crate) fn field(name: &str, ty: Ty, pk: bool) -> Field {
+        Field {
+            name: name.into(),
+            ty,
+            pk,
+            span: zero(),
+        }
+    }
+
+    fn table() -> Table {
+        Table {
+            name: "orders".into(),
+            fields: vec![
+                field("id", Ty::Uuid, true),
+                field("total", Ty::Money, false),
+                field(
+                    "status",
+                    Ty::Enum(vec!["pending".into(), "paid".into()]),
+                    false,
+                ),
+            ],
+            span: zero(),
+        }
+    }
+
+    /// The one claim the rest of this module rests on: what a quote of a
+    /// one-column `CREATE TABLE` looks like, so that `only_column` finds the
+    /// definition and not some neighbouring node.
+    #[test]
+    fn only_column_finds_the_definition() {
+        let one = sql↖CREATE TABLE t (c BIGINT NOT NULL)↗;
+        assert_eq!(only_column(&one).coparse(), "c BIGINT NOT NULL");
+    }
+
+    #[test]
+    fn create_table_spells_the_columns() {
+        let out = create_table(&table(), Engine::Postgres).coparse();
+        assert_eq!(
+            out,
+            "CREATE TABLE orders (\n  id UUID PRIMARY KEY,\n  total BIGINT NOT NULL,\n  status TEXT NOT NULL CHECK (status IN ('pending', 'paid'))\n)"
+        );
+    }
+
+    #[test]
+    fn sqlite_spells_its_own_types() {
+        let out = create_table(&table(), Engine::Sqlite).coparse();
+        assert!(out.contains("id TEXT PRIMARY KEY"), "{out}");
+        assert!(out.contains("total INTEGER NOT NULL"), "{out}");
+    }
+
+    /// What quoting the DDL buys over building it: a variant that would have
+    /// ended the `'…'` early is one literal token instead.
+    #[test]
+    fn an_enum_variant_cannot_break_out_of_its_literal() {
+        let field = field(
+            "status",
+            Ty::Enum(vec!["it's fine".into(), "ok".into()]),
+            false,
+        );
+        let out = column_def(&field, Engine::Postgres).coparse();
+        assert_eq!(
+            out,
+            "status TEXT NOT NULL CHECK (status IN ('it''s fine', 'ok'))"
+        );
+    }
+
+    /// The statements in a script are separated, not run together.
+    #[test]
+    fn a_script_terminates_every_statement() {
+        let out = script(vec![sql↖SELECT 1↗, sql↖SELECT 2↗], Spacing::Loose);
+        assert_eq!(out, "SELECT 1;\n\nSELECT 2;");
+    }
+
+    /// The generated DDL is not merely plausible: it reparses in the grammar
+    /// it was built from.
+    #[test]
+    fn the_schema_parses_with_quilts_sql_grammar() {
+        let out = script(
+            vec![
+                create_table(&table(), Engine::Postgres),
+                create_table(&table(), Engine::Sqlite),
+            ],
+            Spacing::Loose,
+        );
+        let nodes = flat_nodes(&out);
+        SqlLanguage::default().parse(&nodes).unwrap();
+    }
+}

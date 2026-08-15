@@ -12,5 +12,7 @@ metaarch-spec.workspace = true
 # parse `impl` fragments with the real grammars at generation time, so
 # `parse` (which vendors the rust + python tree-sitter parsers) and `python`
 # (which exposes the python `Language`) are enabled too. `wgsl` exposes the
-# wgsl `Language` the analytics generator's tests validate shaders with.
-quilt = {workspace = true, features = ["parse", "python", "rust", "wgsl"]}
+# wgsl `Language` the analytics generator's tests validate shaders with, and
+# `sql` the one the schema, seed and migration generators reparse their own
+# DDL with.
+quilt = {workspace = true, features = ["parse", "python", "rust", "sql", "wgsl"]}

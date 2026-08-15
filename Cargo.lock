@@ -896,7 +896,7 @@ dependencies = [
 [[package]]
 name = "quiltlang"
 version = "0.5.0"
-source = "git+https://github.com/QuiltLang/quilt.git?rev=ba27c41#ba27c414031ae934dc1e1e7c68b27465e10e447c"
+source = "git+https://github.com/QuiltLang/quilt.git?rev=9348f65#9348f65cf5d9f9fe7989d5624fcbf57f1a3ea822"
 dependencies = [
  "cc",
  "clap",
@@ -1461,7 +1461,7 @@ checksum = "009994f150cc0cd50ff54917d5bc8bffe8cad10ca10d81c34da2ec421ae61782"
 [[package]]
 name = "tree-sitter-quilt"
 version = "0.5.0"
-source = "git+https://github.com/QuiltLang/quilt.git?rev=ba27c41#ba27c414031ae934dc1e1e7c68b27465e10e447c"
+source = "git+https://github.com/QuiltLang/quilt.git?rev=9348f65#9348f65cf5d9f9fe7989d5624fcbf57f1a3ea822"
 dependencies = [
  "cc",
  "tree-sitter-language",

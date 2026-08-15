@@ -262,7 +262,9 @@ decisions get both an entry here and an issue.
 - **Phase-1 type spellings** (2026-07-18): `uuid`/`timestamp` travel as
   strings (no uuid/chrono deps in generated services), `money` is integer
   minor units, `enum` is TEXT + CHECK in both SQL dialects. All seven types
-  keep one spelling per target in `metaarch-codegen/src/lib.rs`.
+  keep one spelling per target in `metaarch-codegen/src/lib.rs` — except
+  SQL's, which moved to `sql.rs.quilt` when the DDL became quoted: it is a
+  type *node* there, not a string.
 - **`system.arch` snapshot as migration base** (2026-07-18): `generate`
   copies the source `.arch` byte-for-byte into the output root; the next run
   reparses it with the ordinary parser and diffs specs. No snapshot format,
@@ -306,7 +308,9 @@ decisions get both an entry here and an issue.
 - **quilt pinned to a rev, not a tag** (2026-07-19): the Nix lift marker
   landed after `v0.5.0`, so the pin moved to `ba27c41` (the sibling
   checkout `bin/expand` uses, keeping expander and runtime matched). Return
-  to a tag at the next quilt release.
+  to a tag at the next quilt release. Moved on to `9348f65` (2026-08-15) for
+  the SQL target — re-expansion of every existing generator was
+  byte-identical across the bump.
 - **`impl` routes carry method + path** (2026-07-19): the plan's "attach a
   fragment to a service/endpoint" needs an endpoint surface the DSL didn't
   have, so the escape hatch *is* the endpoint surface:
@@ -493,3 +497,19 @@ decisions get both an entry here and an issue.
   `.pgdata/<svc>` — nothing to collide with, nothing listening on TCP —
   and outlives the fleet (`bin/main` starts it via `bin/db up`; `bin/db
   down` stops it).
+- **SQL is quoted, not built** (2026-08-15, issue #43): quilt gained a SQL
+  target (QuiltLang/quilt#219, #234), so `sql.rs`, `seed.rs` and
+  `migrations.rs` became `.rs.quilt` metaprograms like every other
+  language-emitting generator. Every statement is a `sql↖…↗` quote and every
+  spec value crosses in through a hole or a lift, which is what retires the
+  two string habits the text version had: `'{v}'` around enum variants and
+  seed strings (a variant holding an apostrophe used to produce SQL that
+  ended the literal early), and `column_def(…).replace(" NOT NULL", "")` for
+  the `ADD COLUMN` spelling. Two positions the grammar gives no hole — a
+  column definition standing alone, and the `column_definitions` list
+  interior — are handled the way the nix and rust generators handle theirs:
+  the definitions come out of one-column `CREATE TABLE` quotes (the
+  wrap-and-strip trick `SqlLanguage::parse_pre` uses for bare expressions),
+  and only the list wrapper is a term builder. Output is byte-identical to
+  the text generators', and each generator now reparses what it emits with
+  quilt's own SQL grammar.

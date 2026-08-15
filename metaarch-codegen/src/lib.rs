@@ -2,21 +2,18 @@
 //!
 //! The language-emitting generators are quilt metaprograms: `.rs.quilt`
 //! sources in this crate, expanded to `.rs` siblings by `bin/expand` (the
-//! nanobots pattern) and compiled in below. SQL and config files are built as
-//! plain text here — quilt has no SQL/TOML grammar (yet). See
+//! nanobots pattern) and compiled in below. The config files are still built
+//! as plain text here — quilt has no TOML/YAML/Markdown grammar (yet). See
 //! docs/wiki/codegen.md for the generated-system layout.
 //!
 //! `generate` is a pure function of the spec: same input, byte-identical
 //! output. No timestamps, no hash-map iteration.
 
-use metaarch_spec::{Engine, EventType, Lang, Service, SystemSpec, Ty};
+use metaarch_spec::{EventType, Lang, Service, SystemSpec, Ty};
 
 mod cargo_lock;
 mod fragment;
-mod migrations;
 mod process_compose;
-mod seed;
-mod sql;
 mod viz;
 
 // Expanded from the `.rs.quilt` siblings by `bin/expand`; gitignored.
@@ -24,10 +21,13 @@ mod analytics;
 mod clients;
 mod db;
 mod docs;
+mod migrations;
 mod nix;
 mod python_service;
 mod rust_service;
+mod seed;
 mod smoke;
+mod sql;
 mod system;
 
 pub use fragment::check_fragments;
@@ -266,21 +266,9 @@ pub(crate) fn python_ty(ty: &Ty) -> &'static str {
     }
 }
 
-/// SQL column type per engine. Enums become TEXT + CHECK (added by the DDL
-/// builder); sqlite stores bools as INTEGER and timestamps as TEXT.
-pub(crate) fn sql_ty(ty: &Ty, engine: Engine) -> &'static str {
-    match (ty, engine) {
-        (Ty::Uuid, Engine::Postgres) => "UUID",
-        (Ty::Uuid, Engine::Sqlite) => "TEXT",
-        (Ty::Int | Ty::Money, Engine::Postgres) => "BIGINT",
-        (Ty::Int | Ty::Money, Engine::Sqlite) => "INTEGER",
-        (Ty::Text | Ty::Enum(_), _) => "TEXT",
-        (Ty::Bool, Engine::Postgres) => "BOOLEAN",
-        (Ty::Bool, Engine::Sqlite) => "INTEGER",
-        (Ty::Timestamp, Engine::Postgres) => "TIMESTAMPTZ",
-        (Ty::Timestamp, Engine::Sqlite) => "TEXT",
-    }
-}
+// The SQL spelling of the type set lives in `sql.rs.quilt` instead: it is not
+// a string there but the type *node* the grammar builds, taken from a parsed
+// quote.
 
 /// The standard do-not-edit header, per comment syntax.
 pub(crate) fn header(system: &str, comment: &str) -> String {

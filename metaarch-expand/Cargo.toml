@@ -17,6 +17,7 @@ quilt = {workspace = true, features = [
   "nix",
   "python",
   "rust",
+  "sql",
   "text",
   "typescript",
   "wgsl",
