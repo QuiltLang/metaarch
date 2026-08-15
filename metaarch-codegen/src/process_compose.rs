@@ -5,7 +5,8 @@
 //! hand-rolled `trap 'kill 0' EXIT` supervision `bin/main` does by itself.
 //!
 //! Plain text rather than a quilt metaprogram: quilt has no YAML grammar, so
-//! this follows the SQL/TOML/`.envrc` precedent in codegen.md. The shape is
+//! this follows the TOML/README precedent in codegen.md — the SQL half of
+//! that precedent went away in #43, when quilt grew a SQL target. The shape is
 //! small and fixed — a header, `version`, and one `processes` entry per
 //! service plus the infrastructure one-shots — so a `writeln!` builder is
 //! honest here in a way it would not be for a real language target.
