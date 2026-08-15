@@ -26,8 +26,10 @@ metaarch-spec = {path = "metaarch-spec"}
 # the expander (the sibling quilt checkout used by `bin/expand`), like
 # nanobots. Bump deliberately: re-expand and rebuild when you do.
 # Pinned to a rev (not a tag): the Nix lift marker the phase-3 generators need
-# landed after v0.5.0; move back to a tag at the next quilt release.
-quilt = {git = "https://github.com/QuiltLang/quilt.git", rev = "ba27c41", package = "quiltlang", default-features = false}
+# landed after v0.5.0, and SQL — the target language the DDL generators quote
+# (QuiltLang/quilt#219, #234) — landed after that. Move back to a tag at the
+# next quilt release.
+quilt = {git = "https://github.com/QuiltLang/quilt.git", rev = "9348f65", package = "quiltlang", default-features = false}
 # The LSP + editor-facing grammar (phase 4e). tree-sitter is pinned to the
 # same minor quilt uses so one runtime serves the arch grammar and quilt's
 # vendored ones; tower-lsp matches quilt-lsp's.

@@ -7,7 +7,7 @@ Phases 1–3 of the [plan](plan.md) implemented what is described here.
 
 Generators are **quilt metaprograms**: `.rs.quilt` sources in
 `metaarch-codegen` that loop over the spec and *quote* their output —
-`python↖ ... ↗`, `zsh↖ ... ↗`, SQL-as-text, `nix` — splicing spec data in
+`python↖ ... ↗`, `zsh↖ ... ↗`, `sql↖ ... ↗`, `nix` — splicing spec data in
 with unquotes and lifts. This is the nanobots pattern:
 
 - `.rs.quilt` files live next to their expanded `.rs` siblings (gitignored)
@@ -52,12 +52,25 @@ Lessons (phases 1–2) about where quotes stop and builders start:
   and select with `${name}` dynamics — so no identifier or attrset-key
   position is ever spliced. Multi-line shell text inside Nix is built as a
   ground Rust string and lifted whole (`\n` escapes in the emitted literal).
+- **SQL splices in three positions and no more** (issue #43): an
+  `object_reference` (the table a statement names), a column name or type
+  inside a definition, and a list interior — `VALUES (…)`, an `INSERT`'s
+  column list, a CHECK's `IN (…)`. Two things the grammar gives no hole for
+  are handled with builders: a *column definition on its own* (nothing in
+  `program` accepts one, so each is written inside a throwaway one-column
+  `CREATE TABLE` and lifted back out — quilt's own wrap-and-strip trick for
+  bare expressions, one level up), and the `column_definitions` list
+  interior, where a hole parses as a column *name* and leaves the type
+  MISSING. Whole files are assembled through a *statement*-position hole.
+  Every value that comes from the spec is lifted, so no `'…'` is written in
+  a generator; each generator reparses its own output with quilt's SQL
+  grammar in a test.
 
-SQL and the config files (TOML, YAML, `.envrc`, README) are plain text built
-in ordinary Rust — quilt has no grammar for them yet. The migrations and seed
-generators are plain text too, sharing the DDL spelling (`column_def`,
-`create_table`) with the schema generator so an `ALTER` adds a column
-spelled exactly as a fresh `CREATE` would.
+The config files (TOML, YAML, `.envrc`, README, `Cargo.lock`) and the
+topology SVG are plain text built in ordinary Rust — quilt has no grammar
+for them yet. The migrations and seed generators share the DDL spelling
+(`column_def`, `create_table`, `sql_ty`) with the schema generator so an
+`ALTER` adds a column spelled exactly as a fresh `CREATE` would.
 
 ## Generated-system layout
 

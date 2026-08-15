@@ -10,8 +10,11 @@
 /metaarch-codegen/src/clients.rs
 /metaarch-codegen/src/db.rs
 /metaarch-codegen/src/docs.rs
+/metaarch-codegen/src/migrations.rs
 /metaarch-codegen/src/nix.rs
 /metaarch-codegen/src/python_service.rs
 /metaarch-codegen/src/rust_service.rs
+/metaarch-codegen/src/seed.rs
 /metaarch-codegen/src/smoke.rs
+/metaarch-codegen/src/sql.rs
 /metaarch-codegen/src/system.rs
